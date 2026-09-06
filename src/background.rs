@@ -1,4 +1,6 @@
-use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};
+use crossbeam_channel::{Receiver, RecvTimeoutError};
+#[cfg(test)]
+use crossbeam_channel::TryRecvError;
 use std::panic::{catch_unwind, UnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -74,6 +76,7 @@ impl<S> ControlToken<S> {
         current.take()
     }
 
+    #[cfg(test)]
     pub fn result(&self) -> Result<(), ()> {
         if self.is_cancelled() {
             Err(())
@@ -120,6 +123,7 @@ impl<T, S> BackgroundHandle<T, S> {
         }
     }
 
+    #[cfg(test)]
     pub fn poll(&self) -> Option<T> {
         match self.result.try_recv() {
             Ok(value) => Some(value.unwrap()),
@@ -148,6 +152,7 @@ impl<T, S> BackgroundHandle<T, S> {
         self.thread.unpark();
     }
 
+    #[cfg(test)]
     pub fn is_cancelled(&self) -> bool {
         self.control.is_cancelled()
     }
@@ -165,6 +170,7 @@ impl<T, S> BackgroundHandle<T, S> {
         self.thread.unpark();
     }
 
+    #[cfg(test)]
     pub fn is_paused(&self) -> bool {
         self.control.is_paused()
     }
