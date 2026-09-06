@@ -3,6 +3,7 @@ use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use compresstimator::Compresstimator;
 use filesize::PathExt;
 use globset::GlobSet;
 use serde_derive::Serialize;
@@ -21,6 +22,7 @@ pub struct FileInfo {
     pub path: PathBuf,
     pub logical_size: u64,
     pub physical_size: u64,
+    pub estimated_physical_size: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -28,6 +30,7 @@ pub struct GroupInfo {
     pub files: VecDeque<FileInfo>,
     pub logical_size: u64,
     pub physical_size: u64,
+    pub estimated_physical_size: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,6 +57,7 @@ pub struct GroupSummary {
     pub count: usize,
     pub logical_size: u64,
     pub physical_size: u64,
+    pub estimated_physical_size: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -127,6 +131,7 @@ impl GroupInfo {
             count: self.files.len(),
             logical_size: self.logical_size,
             physical_size: self.physical_size,
+            estimated_physical_size: self.estimated_physical_size,
         }
     }
 
@@ -136,6 +141,9 @@ impl GroupInfo {
         if let Some(fi) = ret {
             self.logical_size = self.logical_size.saturating_sub(fi.logical_size);
             self.physical_size = self.physical_size.saturating_sub(fi.physical_size);
+            self.estimated_physical_size = self
+                .estimated_physical_size
+                .saturating_sub(fi.estimated_physical_size);
             Some(fi)
         } else {
             None
@@ -145,6 +153,9 @@ impl GroupInfo {
     fn push(&mut self, fi: FileInfo) {
         self.logical_size = self.logical_size.saturating_add(fi.logical_size);
         self.physical_size = self.physical_size.saturating_add(fi.physical_size);
+        self.estimated_physical_size = self
+            .estimated_physical_size
+            .saturating_add(fi.estimated_physical_size);
         self.files.push_back(fi);
     }
 }
@@ -153,15 +164,25 @@ impl GroupInfo {
 pub struct FolderScan {
     path: PathBuf,
     excludes: GlobSet,
+    ratio_limit: f32,
 }
 
 impl FolderScan {
-    pub fn new<P: AsRef<Path>>(path: P, excludes: GlobSet) -> Self {
+    pub fn new<P: AsRef<Path>>(path: P, excludes: GlobSet, ratio_limit: f32) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
             excludes,
+            ratio_limit,
         }
     }
+}
+
+fn estimate_physical_size(logical_size: u64, ratio: f32) -> u64 {
+    if !ratio.is_finite() {
+        return logical_size;
+    }
+
+    ((logical_size as f64) * (ratio.clamp(0.0, 1.0) as f64)).round() as u64
 }
 
 impl Background for FolderScan {
@@ -169,11 +190,16 @@ impl Background for FolderScan {
     type Status = (PathBuf, FolderSummary);
 
     fn run(self, control: &ControlToken<Self::Status>) -> Self::Output {
-        let FolderScan { path, excludes } = self;
+        let FolderScan {
+            path,
+            excludes,
+            ratio_limit,
+        } = self;
         let mut ds = FolderInfo::new(&path);
         let incompressible = pathdb();
         let mut incompressible = incompressible.write().unwrap();
         let _ = incompressible.load();
+        let estimator = Compresstimator::with_block_size(8192);
 
         let mut last_status = Instant::now();
 
@@ -193,10 +219,12 @@ impl Background for FolderScan {
                 .unwrap_or_else(|_e| entry.path())
                 .to_path_buf();
 
-            let fi = FileInfo {
+            let logical_size = metadata.len().max(physical);
+            let mut fi = FileInfo {
                 path: shortname,
-                logical_size: metadata.len().max(physical),
+                logical_size,
                 physical_size: physical,
+                estimated_physical_size: physical,
             };
 
             if count % 8 == 0 {
@@ -232,7 +260,18 @@ impl Background for FolderScan {
             {
                 ds.push(FileKind::Skipped, fi);
             } else {
-                ds.push(FileKind::Compressible, fi);
+                // Analyse uses the same lightweight sampled estimator as the actual
+                // compaction path. This is an estimate, not a promise of WOF output.
+                match std::fs::File::open(entry.path())
+                    .and_then(|handle| estimator.compresstimate(&handle, metadata.len()))
+                {
+                    Ok(ratio) if ratio < ratio_limit => {
+                        fi.estimated_physical_size =
+                            estimate_physical_size(fi.logical_size, ratio).min(fi.physical_size);
+                        ds.push(FileKind::Compressible, fi);
+                    }
+                    Ok(_) | Err(_) => ds.push(FileKind::Skipped, fi),
+                }
             }
         }
 
@@ -245,8 +284,9 @@ fn it_walks() {
     use crate::background::BackgroundHandle;
     use crate::config::Config;
 
-    let gs = Config::default().globset().unwrap();
-    let scanner = FolderScan::new("C:\\Games", gs);
+    let config = Config::default();
+    let gs = config.globset().unwrap();
+    let scanner = FolderScan::new("C:\\Games", gs, config.ratio_limit());
 
     let task = BackgroundHandle::spawn(scanner);
 
