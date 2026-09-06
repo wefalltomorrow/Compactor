@@ -79,13 +79,15 @@ impl<T> Backend<T> {
     }
 
     fn scan_loop(&mut self, path: PathBuf) {
-        let excludes = config().read().unwrap().current().globset().expect("globs");
+        let current = config().read().unwrap().current();
+        let excludes = current.globset().expect("globs");
+        let ratio_limit = current.ratio_limit();
 
-        let scanner = FolderScan::new(path, excludes);
+        let scanner = FolderScan::new(path, excludes, ratio_limit);
         let task = BackgroundHandle::spawn(scanner);
         let start = Instant::now();
 
-        self.gui.status("Scanning", None);
+        self.gui.status("Analysing", None);
         loop {
             let msg = self.msg.recv_timeout(Duration::from_millis(25));
 
@@ -97,7 +99,7 @@ impl<T> Backend<T> {
                 }
                 Ok(GuiRequest::Resume) => {
                     task.resume();
-                    self.gui.status("Scanning", None);
+                    self.gui.status("Analysing", None);
                     self.gui.resumed();
                 }
                 Ok(GuiRequest::Stop) | Err(RecvTimeoutError::Disconnected) => {
@@ -112,7 +114,7 @@ impl<T> Backend<T> {
             match task.wait_timeout(Duration::from_millis(25)) {
                 Some(Ok(info)) => {
                     self.gui
-                        .status(format!("Scanned in {:.2?}", start.elapsed()), Some(1.0));
+                        .status(format!("Analysed in {:.2?}", start.elapsed()), Some(1.0));
                     self.gui.summary(info.summary());
                     self.gui.scanned();
                     self.info = Some(info);
@@ -120,7 +122,7 @@ impl<T> Backend<T> {
                 }
                 Some(Err(info)) => {
                     self.gui.status(
-                        format!("Scan stopped after {:.2?}", start.elapsed()),
+                        format!("Analysis stopped after {:.2?}", start.elapsed()),
                         Some(0.5),
                     );
                     self.gui.summary(info.summary());
@@ -131,7 +133,7 @@ impl<T> Backend<T> {
                 None => {
                     if let Some(status) = task.status() {
                         self.gui
-                            .status(format!("Scanning: {}", status.0.display()), None);
+                            .status(format!("Analysing: {}", status.0.display()), None);
                         self.gui.summary(status.1);
                     }
                 }
@@ -144,8 +146,14 @@ impl<T> Backend<T> {
         let (send_file, send_file_rx) = bounded::<(PathBuf, u64)>(1);
         let (recv_result_tx, recv_result) = bounded::<(PathBuf, io::Result<bool>)>(1);
 
-        let compression = Some(config().read().unwrap().current().compression);
-        let compactor = BackgroundCompactor::new(compression, send_file_rx, recv_result_tx);
+        let current = config().read().unwrap().current();
+        let compression = Some(current.compression);
+        let compactor = BackgroundCompactor::new(
+            compression,
+            current.ratio_limit(),
+            send_file_rx,
+            recv_result_tx,
+        );
         let task = BackgroundHandle::spawn(compactor);
         let start = Instant::now();
 
@@ -236,6 +244,7 @@ impl<T> Backend<T> {
                         match result {
                             Ok(true) => {
                                 fi.physical_size = path.size_on_disk().unwrap_or(fi.physical_size);
+                                fi.estimated_physical_size = fi.physical_size;
 
                                 // Windows can occasionally report success without reducing allocation.
                                 if fi.physical_size >= fi.logical_size {
@@ -248,12 +257,14 @@ impl<T> Backend<T> {
                                 }
                             }
                             Ok(false) => {
+                                fi.estimated_physical_size = fi.physical_size;
                                 if let Ok(metadata) = std::fs::metadata(&path) {
                                     incompressible.insert(incompressible_key(&path, &metadata));
                                 }
                                 folder.push(FileKind::Skipped, fi);
                             }
                             Err(err) => {
+                                fi.estimated_physical_size = fi.physical_size;
                                 self.gui.status(
                                     format!("Error: {}, {}", err, fi.path.display()),
                                     Some(progress(done_bytes, total_bytes)),
@@ -352,7 +363,7 @@ impl<T> Backend<T> {
         let (send_file, send_file_rx) = bounded::<(PathBuf, u64)>(1);
         let (recv_result_tx, recv_result) = bounded::<(PathBuf, io::Result<bool>)>(1);
 
-        let compactor = BackgroundCompactor::new(None, send_file_rx, recv_result_tx);
+        let compactor = BackgroundCompactor::new(None, 0.0, send_file_rx, recv_result_tx);
         let task = BackgroundHandle::spawn(compactor);
         let start = Instant::now();
 
@@ -431,9 +442,11 @@ impl<T> Backend<T> {
                         match result {
                             Ok(_) => {
                                 fi.physical_size = fi.logical_size;
+                                fi.estimated_physical_size = fi.logical_size;
                                 folder.push(FileKind::Compressible, fi);
                             }
                             Err(err) => {
+                                fi.estimated_physical_size = fi.physical_size;
                                 self.gui.status(
                                     format!("Error: {}, {}", err, fi.path.display()),
                                     Some(progress(done_bytes, total_bytes)),
