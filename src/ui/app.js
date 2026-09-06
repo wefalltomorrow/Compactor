@@ -92,8 +92,6 @@ var Util = (function() {
 			var match = (/\s*([KMGTPEZY])(i)?([Bb])?\s*$/i).exec(human);
 			if (match) {
 				var pow = (match[2] == 'i') ? 1024 : 1000;
-				// var mul = (match[3] == 'B') ? 8 : 1;
-
 				num *= Math.pow(pow, powers.indexOf(match[1].toUpperCase()));
 			}
 
@@ -204,6 +202,7 @@ var Response = (function() {
 				case "Config":
 					Gui.set_decimal(msg.decimal);
 					Gui.set_compression(msg.compression);
+					Gui.set_min_savings(msg.min_savings_percent);
 					Gui.set_excludes(msg.excludes);
 					break;
 
@@ -248,9 +247,13 @@ var Gui = (function() {
 			});
 
 			$("#Button_Save").on("click", function() {
+				var minSavings = parseFloat($("#Min_Savings").val());
+				if (isNaN(minSavings)) minSavings = 1;
+
 				Action.save_config({
-				  decimal: $("#SI_Units").val() == "D",
+					decimal: $("#SI_Units").val() == "D",
 					compression: $("#Compression_Mode").val(),
+					min_savings_percent: minSavings,
 					excludes: $("#Excludes").val()
 				});
 			});
@@ -285,6 +288,10 @@ var Gui = (function() {
 
 		set_compression: function(compression) {
 			$("#Compression_Mode").val(compression);
+		},
+
+		set_min_savings: function(percent) {
+			$("#Min_Savings").val(percent);
 		},
 
 		set_excludes: function(excludes) {
@@ -374,9 +381,9 @@ var Gui = (function() {
 			Gui.set_folder_summary({
 				logical_size: 0,
 				physical_size: 0,
-				compressed: {count: 0, logical_size: 0, physical_size: 0},
-				compressible: {count: 0, logical_size: 0, physical_size: 0},
-				skipped: {count: 0, logical_size: 0, physical_size: 0}
+				compressed: {count: 0, logical_size: 0, physical_size: 0, estimated_physical_size: 0},
+				compressible: {count: 0, logical_size: 0, physical_size: 0, estimated_physical_size: 0},
+				skipped: {count: 0, logical_size: 0, physical_size: 0, estimated_physical_size: 0}
 			});
 		},
 
@@ -401,7 +408,16 @@ var Gui = (function() {
 				document.getElementById("Breakdown_Skipped").style.width = "" + 100 * (data.skipped.physical_size / total).toFixed(2) + "%";
 			}
 
-			$("#Space_Saved").text(Util.bytes_to_human(data.compressed.logical_size - data.compressed.physical_size));
+			var estimatedCandidateSize = data.compressible.estimated_physical_size;
+			if (estimatedCandidateSize === undefined || estimatedCandidateSize === null) {
+				estimatedCandidateSize = data.compressible.physical_size;
+			}
+			var estimatedSavings = Math.max(0, data.compressible.physical_size - estimatedCandidateSize);
+			var estimatedTotal = Math.max(0, data.physical_size - estimatedSavings);
+
+			$("#Space_Saved").text(Util.bytes_to_human(Math.max(0, data.compressed.logical_size - data.compressed.physical_size)));
+			$("#Estimated_Savings").text(Util.bytes_to_human(estimatedSavings));
+			$("#Estimated_Physical").text(Util.bytes_to_human(estimatedTotal));
 
 			$("#File_Count_Compressed").text(Util.format_number(data.compressed.count, 0));
 			$("#File_Count_Compressible").text(Util.format_number(data.compressible.count, 0));
@@ -411,7 +427,6 @@ var Gui = (function() {
 		analysis_complete: function() {
 			$("#Activity").hide();
 			$("#Analysis").show();
-
 		}
 	};
 })();
