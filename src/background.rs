@@ -152,11 +152,6 @@ impl<T, S> BackgroundHandle<T, S> {
         self.thread.unpark();
     }
 
-    #[cfg(test)]
-    pub fn is_cancelled(&self) -> bool {
-        self.control.is_cancelled()
-    }
-
     pub fn status(&self) -> Option<S> {
         self.control.get_status()
     }
@@ -168,11 +163,6 @@ impl<T, S> BackgroundHandle<T, S> {
     pub fn resume(&self) {
         self.control.resume();
         self.thread.unpark();
-    }
-
-    #[cfg(test)]
-    pub fn is_paused(&self) -> bool {
-        self.control.is_paused()
     }
 }
 
