@@ -29,55 +29,12 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             decimal: false,
-            compression: Compression::default(),
+            compression: Compression::Lzx,
             min_savings_percent: default_min_savings_percent(),
             excludes: vec![
                 "*:\\Windows*",
                 "*:\\System Volume Information*",
                 "*:\\$*",
-                "*.7z",
-                "*.aac",
-                "*.avi",
-                "*.ba",
-                "*.{bik,bk2,bnk,pc_binkvid}",
-                "*.br",
-                "*.bz2",
-                "*.cab",
-                "*.dl_",
-                "*.docx",
-                "*.flac",
-                "*.flv",
-                "*.gif",
-                "*.gz",
-                "*.jpeg",
-                "*.jpg",
-                "*.log",
-                "*.lz4",
-                "*.lzma",
-                "*.lzx",
-                "*.m[24]v",
-                "*.m4a",
-                "*.mkv",
-                "*.mp[234]",
-                "*.mpeg",
-                "*.mpg",
-                "*.ogg",
-                "*.onepkg",
-                "*.png",
-                "*.pptx",
-                "*.rar",
-                "*.upk",
-                "*.vob",
-                "*.vs[st]x",
-                "*.wem",
-                "*.webm",
-                "*.wm[afv]",
-                "*.xap",
-                "*.xnb",
-                "*.xlsx",
-                "*.xz",
-                "*.zst",
-                "*.zstd",
             ]
             .into_iter()
             .map(String::from)
@@ -158,14 +115,21 @@ fn test_config() {
     let s = Config::default();
 
     assert!(s.globset().is_ok());
+    assert_eq!(s.compression, Compression::Lzx);
     assert_eq!(s.min_savings_percent, 1.0);
     assert!((s.ratio_limit() - 0.99).abs() < f32::EPSILON);
 
     let gs = s.globset().unwrap();
-    assert!(gs.is_match("C:\\foo\\bar\\hmm.rar"));
     assert!(gs.is_match("C:\\Windows\\System32\\floop\\bla.txt"));
-    assert!(gs.is_match("C:\\x.lz4"));
-    assert!(gs.is_match("C:\\foo\\PHOTO.JPG"));
+    assert!(gs.is_match("C:\\System Volume Information\\tracking.log"));
+    assert!(gs.is_match("C:\\$Recycle.Bin\\example.bin"));
+
+    // File extensions are intentionally not excluded by default. The sampled
+    // estimator and configured savings threshold decide whether compression is
+    // worthwhile instead of assuming compressibility from a filename.
+    assert!(!gs.is_match("C:\\foo\\archive.rar"));
+    assert!(!gs.is_match("C:\\foo\\data.lz4"));
+    assert!(!gs.is_match("C:\\foo\\PHOTO.JPG"));
 }
 
 #[test]
