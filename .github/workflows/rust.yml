@@ -7,12 +7,16 @@ on:
     branches: [ "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -34,3 +38,4 @@ jobs:
           name: Compactor-x64
           path: target/x86_64-pc-windows-msvc/release/Compactor.exe
           if-no-files-found: error
+          retention-days: 7
