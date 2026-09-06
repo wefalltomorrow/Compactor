@@ -1,7 +1,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::compact::Compression;
@@ -118,9 +118,15 @@ impl ConfigFile {
 impl Config {
     pub fn globset(&self) -> Result<GlobSet, String> {
         let mut globs = GlobSetBuilder::new();
-        for glob in &self.excludes {
-            globs.add(Glob::new(glob).map_err(|e| e.to_string())?);
+
+        for pattern in self.excludes.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            let glob = GlobBuilder::new(pattern)
+                .case_insensitive(true)
+                .build()
+                .map_err(|e| e.to_string())?;
+            globs.add(glob);
         }
+
         globs.build().map_err(|e| e.to_string())
     }
 }
@@ -135,4 +141,15 @@ fn test_config() {
     assert!(gs.is_match("C:\\foo\\bar\\hmm.rar"));
     assert!(gs.is_match("C:\\Windows\\System32\\floop\\bla.txt"));
     assert!(gs.is_match("C:\\x.lz4"));
+    assert!(gs.is_match("C:\\foo\\PHOTO.JPG"));
+}
+
+#[test]
+fn blank_excludes_are_ignored() {
+    let mut s = Config::default();
+    s.excludes.push(String::new());
+    s.excludes.push("   ".to_string());
+
+    let gs = s.globset().unwrap();
+    assert!(!gs.is_match("C:\\foo\\ordinary.txt"));
 }
