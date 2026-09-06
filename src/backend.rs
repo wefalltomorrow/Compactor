@@ -1,7 +1,6 @@
 use std::io;
 use std::path::PathBuf;
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError};
 use filesize::PathExt;
@@ -10,7 +9,7 @@ use crate::background::BackgroundHandle;
 use crate::compression::BackgroundCompactor;
 use crate::folder::{FileKind, FolderInfo, FolderScan};
 use crate::gui::{GuiRequest, GuiWrapper};
-use crate::persistence::{config, pathdb};
+use crate::persistence::{config, incompressible_key, pathdb};
 
 pub struct Backend<T> {
     gui: GuiWrapper<T>,
@@ -27,6 +26,14 @@ fn format_size(size: u64, decimal: bool) -> String {
         options::BINARY
     })
     .expect("file size")
+}
+
+fn progress(done_bytes: u64, total_bytes: u64) -> f32 {
+    if total_bytes == 0 {
+        1.0
+    } else {
+        (done_bytes as f64 / total_bytes as f64).min(1.0) as f32
+    }
 }
 
 impl<T> Backend<T> {
@@ -143,8 +150,12 @@ impl<T> Backend<T> {
         let start = Instant::now();
 
         let mut folder = self.info.take().expect("fileinfo");
-        let total = folder.len(FileKind::Compressible);
-        let mut done = 0;
+        let summary = folder.summary();
+        let total_files = folder.len(FileKind::Compressible);
+        let total_bytes = summary.compressible.logical_size;
+        let compressible_size = summary.compressible.physical_size;
+        let mut done_files = 0usize;
+        let mut done_bytes = 0u64;
 
         let mut last_update = Instant::now();
         let mut last_write = Instant::now();
@@ -152,29 +163,29 @@ impl<T> Backend<T> {
         let mut stopped = false;
 
         let old_size = folder.physical_size;
-        let compressible_size = folder.summary().compressible.physical_size;
 
         let incompressible = pathdb();
         let mut incompressible = incompressible.write().unwrap();
         let _ = incompressible.load();
 
         self.gui.compacting();
-
         self.gui.status("Compacting".to_string(), Some(0.0));
+
         loop {
             while paused && !stopped {
-                self.gui
-                    .status("Paused".to_string(), Some(done as f32 / total as f32));
-
+                self.gui.status(
+                    "Paused".to_string(),
+                    Some(progress(done_bytes, total_bytes)),
+                );
                 self.gui.summary(folder.summary());
 
                 match self.msg.recv() {
-                    Ok(GuiRequest::Pause) => {
-                        paused = true;
-                    }
+                    Ok(GuiRequest::Pause) => paused = true,
                     Ok(GuiRequest::Resume) => {
-                        self.gui
-                            .status("Compacting".to_string(), Some(done as f32 / total as f32));
+                        self.gui.status(
+                            "Compacting".to_string(),
+                            Some(progress(done_bytes, total_bytes)),
+                        );
                         self.gui.resumed();
                         paused = false;
                         last_update = Instant::now();
@@ -203,49 +214,56 @@ impl<T> Backend<T> {
             let mut displayed = false;
 
             if let Some(mut fi) = folder.pop(FileKind::Compressible) {
+                let logical_size = fi.logical_size;
                 send_file
-                    .send((folder.path.join(&fi.path), fi.logical_size))
+                    .send((folder.path.join(&fi.path), logical_size))
                     .expect("send_file");
 
-                if !displayed && last_update.elapsed() > Duration::from_millis(50) {
+                if last_update.elapsed() > Duration::from_millis(50) {
                     self.gui.status(
                         format!("Compacting: {}", fi.path.display()),
-                        Some(done as f32 / total as f32),
+                        Some(progress(done_bytes, total_bytes)),
                     );
                     last_update = Instant::now();
                     displayed = true;
                 }
 
                 loop {
-                    if let Ok((path, result)) = recv_result.recv_timeout(Duration::from_millis(25))
-                    {
-                        done += 1;
+                    if let Ok((path, result)) = recv_result.recv_timeout(Duration::from_millis(25)) {
+                        done_files += 1;
+                        done_bytes = done_bytes.saturating_add(logical_size);
+
                         match result {
                             Ok(true) => {
                                 fi.physical_size = path.size_on_disk().unwrap_or(fi.physical_size);
 
-                                // Irritatingly Windows can return success when it fails.
-                                if fi.physical_size == fi.logical_size {
-                                    incompressible.insert(path);
+                                // Windows can occasionally report success without reducing allocation.
+                                if fi.physical_size >= fi.logical_size {
+                                    if let Ok(metadata) = std::fs::metadata(&path) {
+                                        incompressible.insert(incompressible_key(&path, &metadata));
+                                    }
                                     folder.push(FileKind::Skipped, fi);
                                 } else {
                                     folder.push(FileKind::Compressed, fi);
                                 }
                             }
                             Ok(false) => {
-                                incompressible.insert(path);
+                                if let Ok(metadata) = std::fs::metadata(&path) {
+                                    incompressible.insert(incompressible_key(&path, &metadata));
+                                }
                                 folder.push(FileKind::Skipped, fi);
                             }
                             Err(err) => {
                                 self.gui.status(
                                     format!("Error: {}, {}", err, fi.path.display()),
-                                    Some(done as f32 / total as f32),
+                                    Some(progress(done_bytes, total_bytes)),
                                 );
                                 folder.push(FileKind::Skipped, fi);
                             }
                         }
 
                         if last_update.elapsed() > Duration::from_millis(50) {
+                            last_update = Instant::now();
                             self.gui.summary(folder.summary());
                         }
 
@@ -255,9 +273,9 @@ impl<T> Backend<T> {
                     if !displayed && last_update.elapsed() > Duration::from_millis(50) {
                         self.gui.status(
                             format!("Compacting: {}", fi.path.display()),
-                            Some(done as f32 / total as f32),
+                            Some(progress(done_bytes, total_bytes)),
                         );
-
+                        last_update = Instant::now();
                         displayed = true;
                     }
 
@@ -265,7 +283,7 @@ impl<T> Backend<T> {
                         Ok(GuiRequest::Pause) if !paused => {
                             self.gui.status(
                                 format!("Pausing after {}", fi.path.display()),
-                                Some(done as f32 / total as f32),
+                                Some(progress(done_bytes, total_bytes)),
                             );
                             self.gui.paused();
                             paused = true;
@@ -278,7 +296,7 @@ impl<T> Backend<T> {
                         Ok(GuiRequest::Stop) if !stopped => {
                             self.gui.status(
                                 format!("Stopping after {}", fi.path.display()),
-                                Some(done as f32 / total as f32),
+                                Some(progress(done_bytes, total_bytes)),
                             );
                             stopped = true;
                         }
@@ -293,23 +311,38 @@ impl<T> Backend<T> {
 
         drop(send_file);
         task.wait();
-
         let _ = incompressible.save();
 
         let new_size = folder.physical_size;
         let decimal = config().read().unwrap().current().decimal;
+        let saved = old_size.saturating_sub(new_size);
 
-        let msg = format!(
-            "Compacted {} in {} files, saving {} in {:.2?}",
-            format_size(compressible_size, decimal),
-            done,
-            format_size(old_size - new_size, decimal),
-            start.elapsed()
-        );
+        let msg = if stopped {
+            format!(
+                "Stopped after {} of {} files, saving {} in {:.2?}",
+                done_files,
+                total_files,
+                format_size(saved, decimal),
+                start.elapsed()
+            )
+        } else {
+            format!(
+                "Compacted {} in {} files, saving {} in {:.2?}",
+                format_size(compressible_size, decimal),
+                done_files,
+                format_size(saved, decimal),
+                start.elapsed()
+            )
+        };
 
-        self.gui.status(msg, Some(done as f32 / total as f32));
+        self.gui
+            .status(msg, Some(progress(done_bytes, total_bytes)));
         self.gui.summary(folder.summary());
-        self.gui.scanned();
+        if stopped {
+            self.gui.stopped();
+        } else {
+            self.gui.scanned();
+        }
 
         self.info = Some(folder);
     }
@@ -324,8 +357,11 @@ impl<T> Backend<T> {
         let start = Instant::now();
 
         let mut folder = self.info.take().expect("fileinfo");
-        let total = folder.len(FileKind::Compressed);
-        let mut done = 0;
+        let summary = folder.summary();
+        let total_files = folder.len(FileKind::Compressed);
+        let total_bytes = summary.compressed.logical_size;
+        let mut done_files = 0usize;
+        let mut done_bytes = 0u64;
 
         let mut last_update = Instant::now();
         let mut paused = false;
@@ -334,22 +370,23 @@ impl<T> Backend<T> {
         let old_size = folder.physical_size;
 
         self.gui.compacting();
-
         self.gui.status("Expanding".to_string(), Some(0.0));
+
         loop {
             while paused && !stopped {
-                self.gui
-                    .status("Paused".to_string(), Some(done as f32 / total as f32));
-
+                self.gui.status(
+                    "Paused".to_string(),
+                    Some(progress(done_bytes, total_bytes)),
+                );
                 self.gui.summary(folder.summary());
 
                 match self.msg.recv() {
-                    Ok(GuiRequest::Pause) => {
-                        paused = true;
-                    }
+                    Ok(GuiRequest::Pause) => paused = true,
                     Ok(GuiRequest::Resume) => {
-                        self.gui
-                            .status("Expanding".to_string(), Some(done as f32 / total as f32));
+                        self.gui.status(
+                            "Expanding".to_string(),
+                            Some(progress(done_bytes, total_bytes)),
+                        );
                         self.gui.resumed();
                         paused = false;
                         last_update = Instant::now();
@@ -371,23 +408,26 @@ impl<T> Backend<T> {
             }
 
             if last_update.elapsed() > Duration::from_millis(50) {
-                self.gui
-                    .status("Expanding".to_string(), Some(done as f32 / total as f32));
+                self.gui.status(
+                    "Expanding".to_string(),
+                    Some(progress(done_bytes, total_bytes)),
+                );
                 last_update = Instant::now();
-
                 self.gui.summary(folder.summary());
             }
 
             if let Some(mut fi) = folder.pop(FileKind::Compressed) {
+                let logical_size = fi.logical_size;
                 send_file
-                    .send((folder.path.join(&fi.path), fi.logical_size))
+                    .send((folder.path.join(&fi.path), logical_size))
                     .expect("send_file");
 
                 let mut waiting = false;
                 loop {
-                    if let Ok((_path, result)) = recv_result.recv_timeout(Duration::from_millis(25))
-                    {
-                        done += 1;
+                    if let Ok((_path, result)) = recv_result.recv_timeout(Duration::from_millis(25)) {
+                        done_files += 1;
+                        done_bytes = done_bytes.saturating_add(logical_size);
+
                         match result {
                             Ok(_) => {
                                 fi.physical_size = fi.logical_size;
@@ -396,7 +436,7 @@ impl<T> Backend<T> {
                             Err(err) => {
                                 self.gui.status(
                                     format!("Error: {}, {}", err, fi.path.display()),
-                                    Some(done as f32 / total as f32),
+                                    Some(progress(done_bytes, total_bytes)),
                                 );
                                 folder.push(FileKind::Skipped, fi);
                             }
@@ -408,9 +448,8 @@ impl<T> Backend<T> {
                     if !waiting && last_update.elapsed() > Duration::from_millis(50) {
                         self.gui.status(
                             format!("Expanding: {}", fi.path.display()),
-                            Some(done as f32 / total as f32),
+                            Some(progress(done_bytes, total_bytes)),
                         );
-
                         last_update = Instant::now();
                         waiting = true;
                     }
@@ -419,7 +458,7 @@ impl<T> Backend<T> {
                         Ok(GuiRequest::Pause) if !paused => {
                             self.gui.status(
                                 format!("Pausing after {}", fi.path.display()),
-                                Some(done as f32 / total as f32),
+                                Some(progress(done_bytes, total_bytes)),
                             );
                             self.gui.paused();
                             paused = true;
@@ -432,7 +471,7 @@ impl<T> Backend<T> {
                         Ok(GuiRequest::Stop) if !stopped => {
                             self.gui.status(
                                 format!("Stopping after {}", fi.path.display()),
-                                Some(done as f32 / total as f32),
+                                Some(progress(done_bytes, total_bytes)),
                             );
                             stopped = true;
                         }
@@ -449,20 +488,33 @@ impl<T> Backend<T> {
         task.wait();
 
         let new_size = folder.physical_size;
+        let decimal = config().read().unwrap().current().decimal;
+        let wasted = new_size.saturating_sub(old_size);
 
-        let msg = format!(
-            "Expanded {} files wasting {} in {:.2?}",
-            done,
-            format_size(
-                new_size - old_size,
-                config().read().unwrap().current().decimal
-            ),
-            start.elapsed()
-        );
+        let msg = if stopped {
+            format!(
+                "Stopped after expanding {} of {} files in {:.2?}",
+                done_files,
+                total_files,
+                start.elapsed()
+            )
+        } else {
+            format!(
+                "Expanded {} files using {} more space in {:.2?}",
+                done_files,
+                format_size(wasted, decimal),
+                start.elapsed()
+            )
+        };
 
-        self.gui.status(msg, Some(done as f32 / total as f32));
+        self.gui
+            .status(msg, Some(progress(done_bytes, total_bytes)));
         self.gui.summary(folder.summary());
-        self.gui.scanned();
+        if stopped {
+            self.gui.stopped();
+        } else {
+            self.gui.scanned();
+        }
 
         self.info = Some(folder);
     }
