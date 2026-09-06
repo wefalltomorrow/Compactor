@@ -51,6 +51,7 @@
           <div class="saved"><span class="box">&nbsp;&nbsp;&nbsp;&nbsp;</span> <span id="Space_Saved">0 B</span> of <span id="Size_Logical">0 B</span> saved (<span id="Compress_Ratio">1.00</span>x, <span id="Size_Physical">0 B</span> on-disk)</div>
           <div class="compressed"><span class="box">&nbsp;&nbsp;&nbsp;&nbsp;</span> <span id="Compressed_Size">0 B</span> in <span id="File_Count_Compressed">0</span> compressed</div>
           <div class="compressible"><span class="box">&nbsp;&nbsp;&nbsp;&nbsp;</span> <span id="Compressible_Size">0 B</span> in <span id="File_Count_Compressible">0</span> compressible</div>
+          <div class="estimated">Estimated after compacting: <span id="Estimated_Physical">0 B</span> on-disk (~<span id="Estimated_Savings">0 B</span> additional savings)</div>
           <div class="excluded"><span class="box">&nbsp;&nbsp;&nbsp;&nbsp;</span> <span id="Skipped_Size">0 B</span> in <span id="File_Count_Skipped">0</span> excluded</div>
         </div>
 
@@ -79,6 +80,10 @@
           <option value="LZX">LZX (slow, high compression)</option>
         </select></label>
 
+      <label>Minimum estimated savings
+        <input id="Min_Savings" name="Min_Savings" type="number" min="0" max="100" step="0.1" value="1" style="width: 70px">%
+      </label>
+
       <label>Units
         <select id="SI_Units" name="SI_Units">
           <option value="I">Binary (MiB)</option>
@@ -95,7 +100,7 @@
 
       <p><strong>You have backups, right?</strong></p>
 
-      <p>Problem reports: <a href="https://github.com/Freaky/Compactor">https://github.com/Freaky/Compactor</a>.</p>
+      <p>Problem reports: <a href="https://github.com/wefalltomorrow/Compactor">https://github.com/wefalltomorrow/Compactor</a>.</p>
 
       <hr>
 
