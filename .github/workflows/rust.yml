@@ -2,7 +2,7 @@ name: Windows x64 build
 
 on:
   push:
-    branches: [ "master", "best-of-compactor" ]
+    branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
   workflow_dispatch:
@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -33,7 +33,7 @@ jobs:
         run: cargo test --release --locked --target x86_64-pc-windows-msvc
 
       - name: Upload Compactor x64
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Compactor-x64
           path: target/x86_64-pc-windows-msvc/release/Compactor.exe
