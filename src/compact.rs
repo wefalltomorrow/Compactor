@@ -20,46 +20,45 @@ use winapi::um::winnt::{
     FILE_READ_DATA, FILE_WRITE_ATTRIBUTES, HANDLE, HRESULT, LPCWSTR,
 };
 use winapi::um::winver::{GetFileVersionInfoA, GetFileVersionInfoSizeA, VerQueryValueA};
-use winapi::STRUCT;
 
-STRUCT! {
-    struct _WOF_FILE_COMPRESSION_INFO_V1 {
-        Algorithm: ULONG,
-        Flags: ULONG,
-    }
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct _WOF_FILE_COMPRESSION_INFO_V1 {
+    Algorithm: ULONG,
+    Flags: ULONG,
 }
 
-STRUCT! {
-    struct _WOF_EXTERNAL_INFO {
-        Version: ULONG,
-        Provider: ULONG,
-    }
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct _WOF_EXTERNAL_INFO {
+    Version: ULONG,
+    Provider: ULONG,
 }
 
-STRUCT! {
-    struct _FILE_PROVIDER_EXTERNAL_INFO_V1 {
-        Version: ULONG,
-        Algorithm: ULONG,
-        Flags: ULONG,
-    }
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct _FILE_PROVIDER_EXTERNAL_INFO_V1 {
+    Version: ULONG,
+    Algorithm: ULONG,
+    Flags: ULONG,
 }
 
-STRUCT! {
-    struct VS_FIXEDFILEINFO {
-        dwSignature: DWORD,
-        dwStrucVersion: DWORD,
-        dwFileVersionMS: DWORD,
-        dwFileVersionLS: DWORD,
-        dwProductVersionMS: DWORD,
-        dwProductVersionLS: DWORD,
-        dwFileFlagsMask: DWORD,
-        dwFileFlags: DWORD,
-        dwFileOS: DWORD,
-        dwFileType: DWORD,
-        dwFileSubtype: DWORD,
-        dwFileDateMS: DWORD,
-        dwFileDateLS: DWORD,
-    }
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct VS_FIXEDFILEINFO {
+    dwSignature: DWORD,
+    dwStrucVersion: DWORD,
+    dwFileVersionMS: DWORD,
+    dwFileVersionLS: DWORD,
+    dwProductVersionMS: DWORD,
+    dwProductVersionLS: DWORD,
+    dwFileFlagsMask: DWORD,
+    dwFileFlags: DWORD,
+    dwFileOS: DWORD,
+    dwFileType: DWORD,
+    dwFileSubtype: DWORD,
+    dwFileDateMS: DWORD,
+    dwFileDateLS: DWORD,
 }
 
 const VS_FIXEDFILEINFO_SIGNATURE: DWORD = 0xFEEF_04BD;
