@@ -23,6 +23,7 @@ pub enum GuiRequest {
     SaveConfig {
         decimal: bool,
         compression: String,
+        min_savings_percent: f32,
         excludes: String,
     },
     ResetConfig,
@@ -47,6 +48,7 @@ pub enum GuiResponse {
     Config {
         decimal: bool,
         compression: String,
+        min_savings_percent: f32,
         excludes: String,
     },
     Folder {
@@ -99,6 +101,7 @@ impl<T> GuiWrapper<T> {
         self.send(&GuiResponse::Config {
             decimal: s.decimal,
             compression: s.compression.to_string(),
+            min_savings_percent: s.min_savings_percent,
             excludes: s.excludes.join("\n"),
         });
     }
@@ -200,15 +203,17 @@ pub fn spawn_gui() {
                 Ok(GuiRequest::SaveConfig {
                     decimal,
                     compression,
+                    min_savings_percent,
                     excludes,
                 }) => {
                     let s = Config {
                         decimal,
                         compression: compression.parse().unwrap_or_default(),
+                        min_savings_percent,
                         excludes: excludes.split('\n').map(str::to_owned).collect(),
                     };
 
-                    if let Err(msg) = s.globset() {
+                    if let Err(msg) = s.validate() {
                         tinyfiledialogs::message_box_ok(
                             "Settings Error",
                             &msg,
@@ -220,6 +225,7 @@ pub fn spawn_gui() {
                             &GuiResponse::Config {
                                 decimal: s.decimal,
                                 compression: s.compression.to_string(),
+                                min_savings_percent: s.min_savings_percent,
                                 excludes: s.excludes.join("\n"),
                             },
                         );
@@ -243,6 +249,7 @@ pub fn spawn_gui() {
                         &GuiResponse::Config {
                             decimal: s.decimal,
                             compression: s.compression.to_string(),
+                            min_savings_percent: s.min_savings_percent,
                             excludes: s.excludes.join("\n"),
                         },
                     );
