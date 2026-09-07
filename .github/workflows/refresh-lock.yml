@@ -5,7 +5,7 @@ on:
     branches: [ "release-0.11.1" ]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   lockfile:
@@ -20,16 +20,25 @@ jobs:
         run: |
           $content = Get-Content Cargo.lock -Raw
           $pattern = '(?ms)(\[\[package\]\]\r?\nname = "compactor"\r?\nversion = ")0\.11\.0(")'
+          if ($content -match '(?ms)\[\[package\]\]\r?\nname = "compactor"\r?\nversion = "0\.11\.1"') {
+            Write-Host 'Cargo.lock already contains version 0.11.1.'
+            exit 0
+          }
           $updated = [regex]::Replace($content, $pattern, '${1}0.11.1$2', 1)
           if ($updated -eq $content) {
             throw 'Could not update the Compactor package version in Cargo.lock.'
           }
           Set-Content Cargo.lock -Value $updated -NoNewline
 
-      - name: Upload lockfile
-        uses: actions/upload-artifact@v7
-        with:
-          name: Cargo-lock
-          path: Cargo.lock
-          if-no-files-found: error
-          retention-days: 1
+      - name: Commit lockfile
+        shell: pwsh
+        run: |
+          if (-not (git status --porcelain -- Cargo.lock)) {
+            Write-Host 'No lockfile change to commit.'
+            exit 0
+          }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "Update lockfile for v0.11.1"
+          git push
