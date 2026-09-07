@@ -2,19 +2,21 @@
 
 ## Unreleased
 
+## [0.11.0] - 2026-09-07
+
 ### Added
 
 - Configurable minimum estimated savings threshold in Settings; default is 1%.
 - Estimated post-compaction size and additional savings during analysis.
-- Windows x64 MSVC release CI on current stable Rust, with a downloadable `Compactor-x64` Actions artifact.
+- Windows x64 MSVC build and test workflow on stable Rust.
 
 ### Changed
 
 - Default compression algorithm is now LZX.
 - Analysis and compression now use the same sampled compressibility threshold logic.
-- Removed blanket file-extension exclusions; archives, media, game containers, and other files are judged by sampled contents instead of filename.
+- Removed blanket file-extension exclusions; files are judged by sampled contents instead of filename.
 - Default exclusions are limited to Windows, System Volume Information, and Windows-managed root `$*` paths.
-- Exclusion matching is case-insensitive and ignores blank/whitespace-only entries.
+- Exclusion matching is case-insensitive and ignores blank or whitespace-only entries.
 - Compression progress is byte-aware rather than relying only on file count.
 - Incompressible-cache keys now include path, file size, and modification time so changed files are automatically reconsidered.
 - The cache backing file is now `incompressible-v2.dat` to avoid stale path-only entries.
@@ -29,7 +31,7 @@
 - Open WOF targets with the read-data/write-attributes access required by the operation.
 - Skip encrypted, sparse, offline, reparse-point, and NTFS-compressed special files before WOF classification.
 - Use zero-safe progress calculations and saturating size arithmetic to avoid invalid progress or unsigned underflow/overflow edge cases.
-- Preserve clear stopped/cancelled state handling.
+- Preserve clear stopped and cancelled state handling.
 
 ### Maintenance
 
@@ -89,6 +91,8 @@
 
 - Initial release
 
+[Unreleased]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/wefalltomorrow/Compactor/releases/tag/v0.11.0
 [0.7.1]: https://github.com/Freaky/Compactor/releases/tag/v0.7.1
 [0.8.0]: https://github.com/Freaky/Compactor/releases/tag/v0.8.0
 [0.9.0]: https://github.com/Freaky/Compactor/releases/tag/v0.9.0
