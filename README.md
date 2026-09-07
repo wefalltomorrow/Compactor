@@ -8,15 +8,15 @@ This repository is a maintained fork of [Freaky/Compactor](https://github.com/Fr
 
 - XPRESS4K, XPRESS8K, XPRESS16K, and LZX compression
 - LZX as the default compression mode
-- sampled compressibility analysis before compression
-- configurable minimum estimated savings threshold, defaulting to 1%
-- estimated post-compression size and additional savings during analysis
-- pause, resume, and stop controls
-- timestamp preservation after compression and decompression
-- automatic retry of previously incompressible files after they change
-- case-insensitive exclusion patterns with blank-entry filtering
-- safe handling of encrypted, sparse, offline, reparse-point, and NTFS-compressed files
-- no default file-extension exclusions
+- Sampled compressibility analysis before compression
+- Configurable minimum estimated savings threshold, defaulting to 1%
+- Estimated post-compression size and additional savings during analysis
+- Pause, resume, and stop controls
+- Timestamp preservation after compression and decompression
+- Automatic retry of previously incompressible files after they change
+- Case-insensitive exclusion patterns with blank-entry filtering
+- Safe handling of encrypted, sparse, offline, reparse-point, and NTFS-compressed files
+- No default file-extension exclusions
 
 ## Defaults
 
@@ -61,18 +61,18 @@ Keep backups of important data. The software is provided without warranty under 
 
 This fork includes the following changes:
 
-- correct Win32 `BOOL` handling for WOF `DeviceIoControl` calls
-- correct handling of `ERROR_COMPRESSION_NOT_BENEFICIAL`
-- required read-data/write-attributes access for WOF operations
-- case-insensitive exclusions and blank-entry filtering
-- explicit skipping of encrypted, sparse, offline, reparse-point, and NTFS-compressed files
-- incompressible-cache keys based on path, file size, and modification time
-- zero-safe progress calculations and saturating size arithmetic
-- byte-aware compression progress
-- configurable savings thresholds
-- estimated post-compression size and savings in the GUI
+- Correct Win32 `BOOL` handling for WOF `DeviceIoControl` calls
+- Correct handling of `ERROR_COMPRESSION_NOT_BENEFICIAL`
+- Required read-data/write-attributes access for WOF operations
+- Case-insensitive exclusions and blank-entry filtering
+- Explicit skipping of encrypted, sparse, offline, reparse-point, and NTFS-compressed files
+- Incompressible-cache keys based on path, file size, and modification time
+- Zero-safe progress calculations and saturating size arithmetic
+- Byte-aware compression progress
+- Configurable savings thresholds
+- Estimated post-compression size and savings in the GUI
 - LZX as the default compression mode
-- removal of default file-extension exclusions
+- Removal of default file-extension exclusions
 - Windows x64 CI on stable Rust
 
 See [CHANGELOG.md](CHANGELOG.md) for the full change history.
@@ -82,7 +82,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full change history.
 Requirements:
 
 - Windows 10 or Windows 11
-- stable Rust with the `x86_64-pc-windows-msvc` toolchain
+- Stable Rust with the `x86_64-pc-windows-msvc` toolchain
 - Microsoft C++ build tools required by the Rust MSVC toolchain
 
 Build with:
