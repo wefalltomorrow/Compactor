@@ -85,7 +85,7 @@
 
 ### Fixed
 
-- Tests ([#11])
+- Tests ([#11], @Dr-Emann)
 
 ### Removed
 
