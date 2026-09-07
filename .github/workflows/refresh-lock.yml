@@ -1,0 +1,33 @@
+name: Refresh Cargo lockfile
+
+on:
+  push:
+    branches: [ "release-0.11.1" ]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lockfile:
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Refresh lockfile
+        run: cargo generate-lockfile
+
+      - name: Upload lockfile
+        uses: actions/upload-artifact@v7
+        with:
+          name: Cargo-lock
+          path: Cargo.lock
+          if-no-files-found: error
+          retention-days: 1
