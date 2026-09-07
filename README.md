@@ -4,7 +4,7 @@ Compactor is a small Windows GUI for applying Windows Overlay Filter (WOF) files
 
 This repository is a maintained fork of [Freaky/Compactor](https://github.com/Freaky/Compactor). It retains the original Rust GUI and WOF-based compression model while fixing known issues and improving analysis and maintenance.
 
-![Compactor](docs/compactor.png)
+<img src="docs/compactor.png" alt="Compactor" width="1000">
 
 ## Features
 
