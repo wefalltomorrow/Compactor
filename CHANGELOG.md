@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.11.2] - 2026-09-07
+
 ### Added
 
 - In-app viewer for WOF-compressed files and containing folders, with path filtering and pagination for large scans.
@@ -101,7 +103,7 @@
 
 ### Fixed
 
-- Tests ([#11], @Dr-Emann)
+- Tests ([#11])
 
 ### Removed
 
@@ -113,7 +115,8 @@
 
 - Initial release
 
-[Unreleased]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/wefalltomorrow/Compactor/releases/tag/v0.11.2
 [0.11.1]: https://github.com/wefalltomorrow/Compactor/releases/tag/v0.11.1
 [0.11.0]: https://github.com/wefalltomorrow/Compactor/releases/tag/v0.11.0
 [0.7.1]: https://github.com/Freaky/Compactor/releases/tag/v0.7.1

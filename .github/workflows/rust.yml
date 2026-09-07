@@ -26,6 +26,9 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Validate embedded JavaScript
+        run: node --check src/ui/app.js
+
       - name: Build release x64
         run: cargo build --release --locked --target x86_64-pc-windows-msvc
 
