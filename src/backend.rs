@@ -7,8 +7,10 @@ use crossbeam_channel::{bounded, Receiver, RecvTimeoutError};
 use filesize::PathExt;
 
 use crate::background::BackgroundHandle;
-use crate::compression::BackgroundCompactor;
-use crate::folder::{worker_count_for_path, FileInfo, FileKind, FolderInfo, FolderScan};
+use crate::compression::{BackgroundCompactor, CompressionJob};
+use crate::folder::{
+    compression_worker_count_for_path, FileInfo, FileKind, FolderInfo, FolderScan,
+};
 use crate::gui::{CompressedViewItem, GuiRequest, GuiResponse, GuiWrapper};
 use crate::persistence::{config, incompressible_key, pathdb};
 
@@ -270,10 +272,13 @@ impl<T> Backend<T> {
         let current = config().read().unwrap().current();
         let compression = Some(current.compression);
         let mut folder = self.info.take().expect("fileinfo");
-        let worker_count =
-            worker_count_for_path(&folder.path, current.max_threads, current.hdd_single_thread);
+        let worker_count = compression_worker_count_for_path(
+            &folder.path,
+            current.max_threads,
+            current.hdd_single_thread,
+        );
 
-        let (send_file, send_file_rx) = bounded::<(PathBuf, u64)>(worker_count);
+        let (send_file, send_file_rx) = bounded::<CompressionJob>(worker_count);
         let (recv_result_tx, recv_result) = bounded::<(PathBuf, io::Result<bool>)>(worker_count);
         let mut tasks = Vec::with_capacity(worker_count);
 
@@ -319,8 +324,15 @@ impl<T> Backend<T> {
                 if let Some(fi) = folder.pop(FileKind::Compressible) {
                     let path = folder.path.join(&fi.path);
                     let logical_size = fi.logical_size;
+                    let job = CompressionJob {
+                        path: path.clone(),
+                        content_len: fi.content_len,
+                        modified_time: fi.modified_time,
+                        estimate_valid: fi.estimate_valid,
+                        estimated_ratio: fi.estimated_ratio,
+                    };
 
-                    if send_file.send((path.clone(), logical_size)).is_err() {
+                    if send_file.send(job).is_err() {
                         folder.push(FileKind::Compressible, fi);
                         stopped = true;
                         break;
@@ -391,6 +403,12 @@ impl<T> Backend<T> {
                         Ok(true) => {
                             fi.physical_size = path.size_on_disk().unwrap_or(fi.physical_size);
                             fi.estimated_physical_size = fi.physical_size;
+                            fi.estimate_valid = false;
+                            if let Ok(metadata) = std::fs::metadata(&path) {
+                                use std::os::windows::fs::MetadataExt;
+                                fi.content_len = metadata.len();
+                                fi.modified_time = metadata.last_write_time();
+                            }
 
                             if fi.physical_size >= fi.logical_size {
                                 if let Ok(metadata) = std::fs::metadata(&path) {
@@ -403,6 +421,7 @@ impl<T> Backend<T> {
                         }
                         Ok(false) => {
                             fi.estimated_physical_size = fi.physical_size;
+                            fi.estimate_valid = false;
                             if let Ok(metadata) = std::fs::metadata(&path) {
                                 incompressible.insert(incompressible_key(&path, &metadata));
                             }
@@ -503,7 +522,7 @@ impl<T> Backend<T> {
     }
 
     fn uncompress_loop(&mut self) {
-        let (send_file, send_file_rx) = bounded::<(PathBuf, u64)>(1);
+        let (send_file, send_file_rx) = bounded::<CompressionJob>(1);
         let (recv_result_tx, recv_result) = bounded::<(PathBuf, io::Result<bool>)>(1);
 
         let compactor = BackgroundCompactor::new(None, 0.0, send_file_rx, recv_result_tx);
@@ -573,7 +592,13 @@ impl<T> Backend<T> {
             if let Some(mut fi) = folder.pop(FileKind::Compressed) {
                 let logical_size = fi.logical_size;
                 send_file
-                    .send((folder.path.join(&fi.path), logical_size))
+                    .send(CompressionJob {
+                        path: folder.path.join(&fi.path),
+                        content_len: fi.content_len,
+                        modified_time: fi.modified_time,
+                        estimate_valid: fi.estimate_valid,
+                        estimated_ratio: fi.estimated_ratio,
+                    })
                     .expect("send_file");
 
                 let mut waiting = false;
@@ -697,6 +722,10 @@ mod tests {
                 FileKind::Compressed,
                 FileInfo {
                     path,
+                    content_len: logical_size,
+                    modified_time: 0,
+                    estimate_valid: false,
+                    estimated_ratio: 1.0,
                     logical_size,
                     physical_size,
                     estimated_physical_size: physical_size,
