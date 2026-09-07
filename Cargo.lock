@@ -28,7 +28,7 @@ dependencies = [
 name = "arrayref"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4c527152e37cf757a3f78aae5a06fbeefdb07ccc535c980a3208ee3060dd544"
+checksum = "a4c527152e37cf757a3f78faa5a06fbeefdb07ccc535c980a3208ee3060dd544"
 
 [[package]]
 name = "arrayvec"
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "compactor"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "backtrace",
  "compresstimator",
@@ -902,7 +902,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "777182bc735b6424e1a57516d35ed72cb8019d85c8c9bf536dccb3445c1a2f7d"
 dependencies = [
  "same-file",
- "winapi",
  "winapi-util",
 ]
 
