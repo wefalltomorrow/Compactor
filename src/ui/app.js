@@ -169,14 +169,14 @@ var Action = (function() {
 			external.invoke(JSON.stringify({ type: 'Decompress' }));
 		},
 
-\t\tview_compressed: function(view, query, page) {
-\t\t\texternal.invoke(JSON.stringify({
-\t\t\t\ttype: 'ViewCompressed',
-\t\t\t\tview: view,
-\t\t\t\tquery: query,
-\t\t\t\tpage: page
-\t\t\t}));
-\t\t},
+		view_compressed: function(view, query, page) {
+			external.invoke(JSON.stringify({
+				type: 'ViewCompressed',
+				view: view,
+				query: query,
+				page: page
+			}));
+		},
 
 		pause: function() {
 			external.invoke(JSON.stringify({ type: 'Pause' }));
@@ -248,25 +248,25 @@ var Response = (function() {
 })();
 
 var Gui = (function() {
-\t"use strict";
+	"use strict";
 
-\tvar compressedView = {
-\t\tview: "files",
-\t\tpage: 0,
-\t\tpages: 1
-\t};
+	var compressedView = {
+		view: "files",
+		page: 0,
+		pages: 1
+	};
 
-\tvar compressedSearch = Util.debounce(function() {
-\t\tGui.request_compressed(0);
-\t}, 200);
+	var compressedSearch = Util.debounce(function() {
+		Gui.request_compressed(0);
+	}, 200);
 
-\tvar addTableCell = function(row, value, className) {
-\t\tvar cell = $("<td></td>").text(value);
-\t\tif (className) cell.addClass(className);
-\t\trow.append(cell);
-\t};
+	var addTableCell = function(row, value, className) {
+		var cell = $("<td></td>").text(value);
+		if (className) cell.addClass(className);
+		row.append(cell);
+	};
 
-\treturn {
+	return {
 		boot: function() {
 			$("a[href]").on("click", function(e) {
 				e.preventDefault();
@@ -304,95 +304,95 @@ var Gui = (function() {
 			$("#" + page).show();
 		},
 
-\t\topen_compressed_view: function() {
-\t\t\tcompressedView.view = "files";
-\t\t\tcompressedView.page = 0;
-\t\t\tcompressedView.pages = 1;
-\t\t\t$("#Compressed_View_Search").val("");
-\t\t\tGui.page("CompressedFiles");
-\t\t\tGui.request_compressed(0);
-\t\t},
+		open_compressed_view: function() {
+			compressedView.view = "files";
+			compressedView.page = 0;
+			compressedView.pages = 1;
+			$("#Compressed_View_Search").val("");
+			Gui.page("CompressedFiles");
+			Gui.request_compressed(0);
+		},
 
-\t\trequest_compressed: function(page) {
-\t\t\tvar query = $("#Compressed_View_Search").val() || "";
-\t\t\tvar requestedPage = parseInt(page, 10);
-\t\t\tif (isNaN(requestedPage) || requestedPage < 0) requestedPage = 0;
-\t\t\tAction.view_compressed(compressedView.view, query, requestedPage);
-\t\t},
+		request_compressed: function(page) {
+			var query = $("#Compressed_View_Search").val() || "";
+			var requestedPage = parseInt(page, 10);
+			if (isNaN(requestedPage) || requestedPage < 0) requestedPage = 0;
+			Action.view_compressed(compressedView.view, query, requestedPage);
+		},
 
-\t\tset_compressed_mode: function(view) {
-\t\t\tcompressedView.view = view == "folders" ? "folders" : "files";
-\t\t\tGui.request_compressed(0);
-\t\t},
+		set_compressed_mode: function(view) {
+			compressedView.view = view == "folders" ? "folders" : "files";
+			Gui.request_compressed(0);
+		},
 
-\t\tcompressed_page: function(delta) {
-\t\t\tGui.request_compressed(compressedView.page + delta);
-\t\t},
+		compressed_page: function(delta) {
+			Gui.request_compressed(compressedView.page + delta);
+		},
 
-\t\tset_compressed_view: function(data) {
-\t\t\tcompressedView.view = data.view == "folders" ? "folders" : "files";
-\t\t\tcompressedView.page = data.page;
-\t\t\tcompressedView.pages = data.pages;
+		set_compressed_view: function(data) {
+			compressedView.view = data.view == "folders" ? "folders" : "files";
+			compressedView.page = data.page;
+			compressedView.pages = data.pages;
 
-\t\t\t$("#Compressed_View_Root").text(data.root);
-\t\t\t$("#Compressed_View_Summary").text(
-\t\t\t\tUtil.format_number(data.compressed_count, 0) + " compressed files - " +
-\t\t\t\tUtil.bytes_to_human(data.logical_size) + " logical - " +
-\t\t\t\tUtil.bytes_to_human(data.physical_size) + " on-disk - " +
-\t\t\t\tUtil.bytes_to_human(Math.max(0, data.logical_size - data.physical_size)) + " saved"
-\t\t\t);
+			$("#Compressed_View_Root").text(data.root);
+			$("#Compressed_View_Summary").text(
+				Util.format_number(data.compressed_count, 0) + " compressed files - " +
+				Util.bytes_to_human(data.logical_size) + " logical - " +
+				Util.bytes_to_human(data.physical_size) + " on-disk - " +
+				Util.bytes_to_human(Math.max(0, data.logical_size - data.physical_size)) + " saved"
+			);
 
-\t\t\t$(".compressed-view-mode").removeClass("active");
-\t\t\tif (compressedView.view == "folders") {
-\t\t\t\t$("#Button_Compressed_Folders").addClass("active");
-\t\t\t} else {
-\t\t\t\t$("#Button_Compressed_Files").addClass("active");
-\t\t\t}
+			$(".compressed-view-mode").removeClass("active");
+			if (compressedView.view == "folders") {
+				$("#Button_Compressed_Folders").addClass("active");
+			} else {
+				$("#Button_Compressed_Files").addClass("active");
+			}
 
-\t\t\tvar head = $("#Compressed_View_Head").empty();
-\t\t\tvar body = $("#Compressed_View_Body").empty();
-\t\t\tvar header = $("<tr></tr>");
+			var head = $("#Compressed_View_Head").empty();
+			var body = $("#Compressed_View_Body").empty();
+			var header = $("<tr></tr>");
 
-\t\t\tif (compressedView.view == "folders") {
-\t\t\t\taddTableCell(header, "Files");
-\t\t\t}
-\t\t\taddTableCell(header, "Logical");
-\t\t\taddTableCell(header, "On-disk");
-\t\t\taddTableCell(header, "Saved");
-\t\t\taddTableCell(header, compressedView.view == "folders" ? "Folder" : "File", "path");
-\t\t\thead.append(header);
+			if (compressedView.view == "folders") {
+				addTableCell(header, "Files");
+			}
+			addTableCell(header, "Logical");
+			addTableCell(header, "On-disk");
+			addTableCell(header, "Saved");
+			addTableCell(header, compressedView.view == "folders" ? "Folder" : "File", "path");
+			head.append(header);
 
-\t\t\tdata.items.forEach(function(item) {
-\t\t\t\tvar row = $("<tr></tr>");
-\t\t\t\tif (compressedView.view == "folders") {
-\t\t\t\t\taddTableCell(row, Util.format_number(item.count, 0));
-\t\t\t\t}
-\t\t\t\taddTableCell(row, Util.bytes_to_human(item.logical_size));
-\t\t\t\taddTableCell(row, Util.bytes_to_human(item.physical_size));
-\t\t\t\taddTableCell(row, Util.bytes_to_human(Math.max(0, item.logical_size - item.physical_size)));
-\t\t\t\taddTableCell(row, item.path, "path");
-\t\t\t\tbody.append(row);
-\t\t\t});
+			data.items.forEach(function(item) {
+				var row = $("<tr></tr>");
+				if (compressedView.view == "folders") {
+					addTableCell(row, Util.format_number(item.count, 0));
+				}
+				addTableCell(row, Util.bytes_to_human(item.logical_size));
+				addTableCell(row, Util.bytes_to_human(item.physical_size));
+				addTableCell(row, Util.bytes_to_human(Math.max(0, item.logical_size - item.physical_size)));
+				addTableCell(row, item.path, "path");
+				body.append(row);
+			});
 
-\t\t\tif (data.items.length === 0) {
-\t\t\t\tvar empty = $("<tr></tr>");
-\t\t\t\tempty.append(
-\t\t\t\t\t$("<td></td>")
-\t\t\t\t\t\t.attr("colspan", compressedView.view == "folders" ? 5 : 4)
-\t\t\t\t\t\t.addClass("empty")
-\t\t\t\t\t\t.text("No matching compressed " + compressedView.view)
-\t\t\t\t);
-\t\t\t\tbody.append(empty);
-\t\t\t}
+			if (data.items.length === 0) {
+				var empty = $("<tr></tr>");
+				empty.append(
+					$("<td></td>")
+						.attr("colspan", compressedView.view == "folders" ? 5 : 4)
+						.addClass("empty")
+						.text("No matching compressed " + compressedView.view)
+				);
+				body.append(empty);
+			}
 
-\t\t\t$("#Compressed_View_Page").text(
-\t\t\t\t"Page " + Util.format_number(data.page + 1, 0) + " of " +
-\t\t\t\tUtil.format_number(data.pages, 0) + " - " +
-\t\t\t\tUtil.format_number(data.total, 0) + " " + compressedView.view
-\t\t\t);
-\t\t\t$("#Button_Compressed_Previous").prop("disabled", data.page <= 0);
-\t\t\t$("#Button_Compressed_Next").prop("disabled", data.page + 1 >= data.pages);
-\t\t},
+			$("#Compressed_View_Page").text(
+				"Page " + Util.format_number(data.page + 1, 0) + " of " +
+				Util.format_number(data.pages, 0) + " - " +
+				Util.format_number(data.total, 0) + " " + compressedView.view
+			);
+			$("#Button_Compressed_Previous").prop("disabled", data.page <= 0);
+			$("#Button_Compressed_Next").prop("disabled", data.page + 1 >= data.pages);
+		},
 
 		version: function(date, version) {
 			$(".compile-date").text(date);
