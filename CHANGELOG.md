@@ -16,6 +16,10 @@
 - HDD analysis uses a small number of contiguous sample windows to reduce seek overhead.
 - HDDs use one worker by default; unknown storage also uses one worker.
 
+### Maintenance
+
+- Release workflow now requires the current `master` commit and blocks publishing while non-draft pull requests targeting `master` are open.
+
 ## [0.11.0] - 2026-09-07
 
 ### Added
