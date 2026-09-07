@@ -103,7 +103,7 @@
 
 ### Fixed
 
-- Tests ([#11], @Dr-Emann)
+- Tests ([#11])
 
 ### Removed
 
@@ -128,7 +128,7 @@
 [#8]: https://github.com/Freaky/Compactor/issues/8
 [#9]: https://github.com/Freaky/Compactor/pull/9
 [#10]: https://github.com/Freaky/Compactor/pull/10
-[#11]: https://github.com/Freaky/Compactor/issues/11
+[#11]: https://github.com/Freaky/Compactor/pull/11
 [#16]: https://github.com/Freaky/Compactor/issues/16
 [#30]: https://github.com/Freaky/Compactor/pull/30
 [#32]: https://github.com/Freaky/Compactor/pull/32
