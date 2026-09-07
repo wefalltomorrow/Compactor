@@ -132,6 +132,10 @@ textarea {
   background-color: #0079d6;
 }
 
+#Analysis .estimated .box {
+  background-color: #9b59b6;
+}
+
 #Analysis .excluded .box, #Breakdown_Skipped {
   background-color: orange;
 }
