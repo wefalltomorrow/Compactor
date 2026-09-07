@@ -13,7 +13,6 @@ use crate::config::Config;
 use crate::folder::FolderSummary;
 use crate::persistence::{self, config};
 
-// messages received from the GUI
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum GuiRequest {
@@ -24,6 +23,8 @@ pub enum GuiRequest {
         decimal: bool,
         compression: String,
         min_savings_percent: f32,
+        max_threads: usize,
+        hdd_single_thread: bool,
         excludes: String,
     },
     ResetConfig,
@@ -37,7 +38,6 @@ pub enum GuiRequest {
     Quit,
 }
 
-// messages to send to the GUI
 #[derive(Serialize)]
 #[serde(tag = "type")]
 pub enum GuiResponse {
@@ -49,6 +49,8 @@ pub enum GuiResponse {
         decimal: bool,
         compression: String,
         min_savings_percent: f32,
+        max_threads: usize,
+        hdd_single_thread: bool,
         excludes: String,
     },
     Folder {
@@ -102,6 +104,8 @@ impl<T> GuiWrapper<T> {
             decimal: s.decimal,
             compression: s.compression.to_string(),
             min_savings_percent: s.min_savings_percent,
+            max_threads: s.max_threads,
+            hdd_single_thread: s.hdd_single_thread,
             excludes: s.excludes.join("\n"),
         });
     }
@@ -204,12 +208,16 @@ pub fn spawn_gui() {
                     decimal,
                     compression,
                     min_savings_percent,
+                    max_threads,
+                    hdd_single_thread,
                     excludes,
                 }) => {
                     let s = Config {
                         decimal,
                         compression: compression.parse().unwrap_or_default(),
                         min_savings_percent,
+                        max_threads,
+                        hdd_single_thread,
                         excludes: excludes.split('\n').map(str::to_owned).collect(),
                     };
 
@@ -226,6 +234,8 @@ pub fn spawn_gui() {
                                 decimal: s.decimal,
                                 compression: s.compression.to_string(),
                                 min_savings_percent: s.min_savings_percent,
+                                max_threads: s.max_threads,
+                                hdd_single_thread: s.hdd_single_thread,
                                 excludes: s.excludes.join("\n"),
                             },
                         );
@@ -250,6 +260,8 @@ pub fn spawn_gui() {
                             decimal: s.decimal,
                             compression: s.compression.to_string(),
                             min_savings_percent: s.min_savings_percent,
+                            max_threads: s.max_threads,
+                            hdd_single_thread: s.hdd_single_thread,
                             excludes: s.excludes.join("\n"),
                         },
                     );

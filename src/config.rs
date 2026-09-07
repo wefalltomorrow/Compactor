@@ -10,6 +10,14 @@ fn default_min_savings_percent() -> f32 {
     1.0
 }
 
+fn default_max_threads() -> usize {
+    0
+}
+
+fn default_hdd_single_thread() -> bool {
+    true
+}
+
 #[derive(Debug, Default)]
 pub struct ConfigFile {
     backing: Option<PathBuf>,
@@ -22,6 +30,10 @@ pub struct Config {
     pub compression: Compression,
     #[serde(default = "default_min_savings_percent")]
     pub min_savings_percent: f32,
+    #[serde(default = "default_max_threads")]
+    pub max_threads: usize,
+    #[serde(default = "default_hdd_single_thread")]
+    pub hdd_single_thread: bool,
     pub excludes: Vec<String>,
 }
 
@@ -31,6 +43,8 @@ impl Default for Config {
             decimal: false,
             compression: Compression::Lzx,
             min_savings_percent: default_min_savings_percent(),
+            max_threads: default_max_threads(),
+            hdd_single_thread: default_hdd_single_thread(),
             excludes: vec![
                 "*:\\Windows*",
                 "*:\\System Volume Information*",
@@ -92,6 +106,10 @@ impl Config {
             return Err("Minimum estimated savings must be between 0 and 100%.".to_string());
         }
 
+        if self.max_threads > 16 {
+            return Err("Maximum threads must be between 0 (Auto) and 16.".to_string());
+        }
+
         self.globset().map(|_| ())
     }
 
@@ -117,6 +135,8 @@ fn test_config() {
     assert!(s.globset().is_ok());
     assert_eq!(s.compression, Compression::Lzx);
     assert_eq!(s.min_savings_percent, 1.0);
+    assert_eq!(s.max_threads, 0);
+    assert!(s.hdd_single_thread);
     assert!((s.ratio_limit() - 0.99).abs() < f32::EPSILON);
 
     let gs = s.globset().unwrap();
@@ -124,9 +144,8 @@ fn test_config() {
     assert!(gs.is_match("C:\\System Volume Information\\tracking.log"));
     assert!(gs.is_match("C:\\$Recycle.Bin\\example.bin"));
 
-    // File extensions are intentionally not excluded by default. The sampled
-    // estimator and configured savings threshold decide whether compression is
-    // worthwhile instead of assuming compressibility from a filename.
+    // File extensions are not excluded by default. The sampled estimator and
+    // configured savings threshold decide whether compression is worthwhile.
     assert!(!gs.is_match("C:\\foo\\archive.rar"));
     assert!(!gs.is_match("C:\\foo\\data.lz4"));
     assert!(!gs.is_match("C:\\foo\\PHOTO.JPG"));
@@ -146,5 +165,12 @@ fn blank_excludes_are_ignored() {
 fn invalid_threshold_is_rejected() {
     let mut s = Config::default();
     s.min_savings_percent = 101.0;
+    assert!(s.validate().is_err());
+}
+
+#[test]
+fn invalid_thread_limit_is_rejected() {
+    let mut s = Config::default();
+    s.max_threads = 17;
     assert!(s.validate().is_err());
 }
