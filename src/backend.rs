@@ -1,6 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::fmt::Write;
+use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError};
@@ -37,6 +39,81 @@ fn progress(done_bytes: u64, total_bytes: u64) -> f32 {
     }
 }
 
+
+#[derive(Default)]
+struct CompressedFolderTotals {
+    count: usize,
+    logical_size: u64,
+    physical_size: u64,
+}
+
+fn build_compressed_report(folder: &FolderInfo, decimal: bool) -> String {
+    let summary = folder.compressed.summary();
+    let saved = summary.logical_size.saturating_sub(summary.physical_size);
+    let mut folders: BTreeMap<PathBuf, CompressedFolderTotals> = BTreeMap::new();
+    let mut files: Vec<&FileInfo> = folder.compressed.files.iter().collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    for fi in &files {
+        let parent = fi
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let totals = folders.entry(parent).or_default();
+        totals.count += 1;
+        totals.logical_size = totals.logical_size.saturating_add(fi.logical_size);
+        totals.physical_size = totals.physical_size.saturating_add(fi.physical_size);
+    }
+
+    let mut report = String::new();
+    writeln!(&mut report, "Compactor compressed-file report").unwrap();
+    writeln!(&mut report, "Root: {}", folder.path.display()).unwrap();
+    writeln!(&mut report).unwrap();
+    writeln!(&mut report, "{} compressed files", summary.count).unwrap();
+    writeln!(&mut report, "Logical size: {}", format_size(summary.logical_size, decimal)).unwrap();
+    writeln!(&mut report, "On-disk size: {}", format_size(summary.physical_size, decimal)).unwrap();
+    writeln!(&mut report, "Saved: {}", format_size(saved, decimal)).unwrap();
+    writeln!(&mut report).unwrap();
+    writeln!(&mut report, "Folders containing compressed files").unwrap();
+    writeln!(&mut report, "Count\tLogical\tOn-disk\tSaved\tFolder").unwrap();
+
+    for (path, totals) in folders {
+        writeln!(
+            &mut report,
+            "{}\t{}\t{}\t{}\t{}",
+            totals.count,
+            format_size(totals.logical_size, decimal),
+            format_size(totals.physical_size, decimal),
+            format_size(
+                totals.logical_size.saturating_sub(totals.physical_size),
+                decimal,
+            ),
+            path.display(),
+        )
+        .unwrap();
+    }
+
+    writeln!(&mut report).unwrap();
+    writeln!(&mut report, "Compressed files").unwrap();
+    writeln!(&mut report, "Logical\tOn-disk\tSaved\tFile").unwrap();
+
+    for fi in files {
+        writeln!(
+            &mut report,
+            "{}\t{}\t{}\t{}",
+            format_size(fi.logical_size, decimal),
+            format_size(fi.physical_size, decimal),
+            format_size(fi.logical_size.saturating_sub(fi.physical_size), decimal),
+            fi.path.display(),
+        )
+        .unwrap();
+    }
+
+    report
+}
+
 impl<T> Backend<T> {
     pub fn new(gui: GuiWrapper<T>, msg: Receiver<GuiRequest>) -> Self {
         Self {
@@ -61,6 +138,9 @@ impl<T> Backend<T> {
                     let path = self.info.take().unwrap().path;
                     self.gui.folder(&path);
                     self.scan_loop(path);
+                }
+                Ok(GuiRequest::ViewCompressed) if self.info.is_some() => {
+                    self.view_compressed();
                 }
                 Ok(GuiRequest::Compress) if self.info.is_some() => {
                     self.compress_loop();
@@ -145,6 +225,29 @@ impl<T> Backend<T> {
                     }
                 }
             }
+        }
+    }
+
+    fn view_compressed(&self) {
+        let Some(folder) = self.info.as_ref() else {
+            return;
+        };
+        let decimal = config().read().unwrap().current().decimal;
+        let report_path = std::env::temp_dir().join("Compactor-compressed-files.txt");
+
+        if let Err(err) = fs::write(&report_path, build_compressed_report(folder, decimal)) {
+            self.gui.status(
+                format!("Unable to create compressed-file report: {}", err),
+                Some(1.0),
+            );
+            return;
+        }
+
+        if let Err(err) = open::that(&report_path) {
+            self.gui.status(
+                format!("Unable to open compressed-file report: {}", err),
+                Some(1.0),
+            );
         }
     }
 
@@ -561,5 +664,41 @@ impl<T> Backend<T> {
         }
 
         self.info = Some(folder);
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compressed_report_lists_folders_and_files() {
+        let mut folder = FolderInfo::new(r"C:\Games");
+        folder.push(
+            FileKind::Compressed,
+            FileInfo {
+                path: PathBuf::from(r"Data\one.bin"),
+                logical_size: 8192,
+                physical_size: 4096,
+                estimated_physical_size: 4096,
+            },
+        );
+        folder.push(
+            FileKind::Compressed,
+            FileInfo {
+                path: PathBuf::from(r"Data\Sub\two.bin"),
+                logical_size: 16384,
+                physical_size: 8192,
+                estimated_physical_size: 8192,
+            },
+        );
+
+        let report = build_compressed_report(&folder, false);
+        assert!(report.contains("2 compressed files"));
+        assert!(report.contains(r"Data\one.bin"));
+        assert!(report.contains(r"Data\Sub\two.bin"));
+        assert!(report.contains("Folders containing compressed files"));
+        assert!(report.contains("Compressed files"));
     }
 }
