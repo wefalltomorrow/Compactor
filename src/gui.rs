@@ -31,12 +31,32 @@ pub enum GuiRequest {
     ChooseFolder,
     Compress,
     Decompress,
-    ViewCompressed,
+    ViewCompressed {
+        view: String,
+        query: String,
+        page: usize,
+    },
     Pause,
     Resume,
     Analyse,
     Stop,
     Quit,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind")]
+pub enum CompressedViewItem {
+    File {
+        path: PathBuf,
+        logical_size: u64,
+        physical_size: u64,
+    },
+    Folder {
+        path: PathBuf,
+        count: usize,
+        logical_size: u64,
+        physical_size: u64,
+    },
 }
 
 #[derive(Serialize)]
@@ -63,6 +83,18 @@ pub enum GuiResponse {
     },
     FolderSummary {
         info: FolderSummary,
+    },
+    CompressedView {
+        root: PathBuf,
+        view: String,
+        query: String,
+        page: usize,
+        pages: usize,
+        total: usize,
+        compressed_count: usize,
+        logical_size: u64,
+        physical_size: u64,
+        items: Vec<CompressedViewItem>,
     },
     Paused,
     Resumed,

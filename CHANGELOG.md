@@ -4,7 +4,7 @@
 
 ### Added
 
-- On-demand report listing WOF-compressed files and the folders containing them.
+- In-app viewer for WOF-compressed files and containing folders, with path filtering and pagination for large scans.
 
 ## [0.11.1] - 2026-09-07
 
