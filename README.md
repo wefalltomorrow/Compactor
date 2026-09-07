@@ -1,177 +1,123 @@
 # Compactor
 
-## A friendly user interface to Windows 10 filesystem compression
+A small, native Windows GUI for applying Windows Overlay Filter (WOF) filesystem compression to folders.
 
-With modern lightweight compression algorithms running at gigabytes per second per core, it's practically a no-brainer to apply them to filesystems to make better use of storage and IO.
+This repository is a maintained fork of [Freaky/Compactor](https://github.com/Freaky/Compactor). It keeps the original lightweight Rust GUI and focused workflow, while fixing correctness issues and improving analysis, safety, and build maintenance without turning Compactor into a larger suite.
 
-Half-recognising this, Windows 10 ships with a reworked compression system that, while fast and effective, is only exposed to users via a command-line tool &mdash; [`compact.exe`].
+## Highlights
 
-Compactor is here to plug that gap, with a simple GUI utility anyone can use.
+- Windows WOF compression with **XPRESS4K, XPRESS8K, XPRESS16K, and LZX**
+- **LZX is the default** for maximum space savings
+- sampled compressibility analysis before files are compacted
+- configurable **minimum estimated savings** threshold; default is **1%**
+- estimated post-compaction size and additional savings shown during analysis
+- pause, resume, and stop support
+- preserves file timestamps after compression/decompression
+- remembers files that were not worth compressing, while automatically reconsidering them after they change
+- case-insensitive user exclusions with blank-rule protection
+- skips unsafe/special file types such as encrypted, sparse, offline, reparse-point, and NTFS-compressed files
+- no blanket file-extension exclusions: files are judged by sampled contents rather than filename
 
-![](https://i.imgur.com/A9si8Zh.png)
+## Defaults
 
-## Installation [![v0.10.1](https://img.shields.io/github/release-pre/Freaky/Compactor.svg)](https://github.com/Freaky/Compactor/releases/tag/v0.10.1) [![Downloads](https://img.shields.io/github/downloads/Freaky/Compactor/total.svg)](https://github.com/Freaky/Compactor/releases)
+Compactor intentionally keeps its defaults simple:
 
-Downloads are available from the [Github Releases](https://github.com/Freaky/Compactor/releases) page under *Assets*, or you can use these direct links:
+- **Compression:** LZX
+- **Minimum estimated savings:** 1%
+- **Excluded paths:** Windows, System Volume Information, and Windows-managed root `$*` paths such as `$Recycle.Bin`
 
-* [v0.10.1 32-bit](https://github.com/Freaky/Compactor/releases/download/v0.10.1/Compactor-0.10.1-i686.zip)
-* [v0.10.1 64-bit](https://github.com/Freaky/Compactor/releases/download/v0.10.1/Compactor-0.10.1.zip)
+Archives, media, textures, game containers, and other file types are not excluded merely because of their extension. If a file is already effectively incompressible, the estimator and minimum-savings threshold will reject it.
 
-The 64-bit version is recommended for most users.
+## How it works
 
-If you get "*Windows protected your PC*" trying to run it, it's just [SmartScreen](https://www.pcworld.com/article/3197443/how-to-get-past-windows-defender-smartscreen-in-windows-10.html) upset the binaries aren't (yet) signed.  Click "*More info*" and "*Run anyway*" if you judge things to be above-board.
+Compactor uses Windows WOF compression through `DeviceIoControl` and the WOF APIs rather than rewriting file contents itself.
 
-Note this is beta software and comes with no warranty.
+Before compacting an eligible file, Compactor samples blocks from the file and passes them through the existing `compresstimator` logic to estimate compressibility. Analysis uses the same threshold logic as the actual compression path.
 
-## Features
+The estimate is deliberately presented as an **estimate**. Sampling uses LZ4 as a fast compressibility proxy, while the final file is compressed by Windows using the selected WOF algorithm, so the final on-disk size can differ.
 
-### Real-time Progress Updates
+## Installation
 
-Compactor's directory analysis updates as it goes.  You too can experience the satisfaction of watching the disk-space used counter tick down with each file compressed.
+This fork currently produces a **Windows x64** release build in GitHub Actions.
 
-### Pause, Resume, Stop
+Until a tagged release is published, download the `Compactor-x64` artifact from the latest successful **Windows x64 build** under the repository's [Actions](https://github.com/wefalltomorrow/Compactor/actions) page. GitHub Actions artifacts require a GitHub sign-in and expire after their retention period.
 
-All operations can be paused and interrupted safely at any time.  Compactor will finish off what it's doing and stop, or restart where it left off.
+Compactor is portable: extract/run `Compactor.exe`; there is no installer or background service.
 
-### Compresstimation
+### Build from source
 
-Compactor performs a statistical compressibility check on larger files before passing them off to Windows for compaction.  A large incompressible file can be skipped in less than a second instead of tying up your disk for minutes for zero benefit.
+Requirements:
 
-### Machine Learning
+- Windows 10 or Windows 11
+- Rust stable with the `x86_64-pc-windows-msvc` toolchain
+- Microsoft C++ build tools required by the Rust MSVC toolchain
 
-Using advanced condition-based AI logic, Compactor can skip over files that have been previously found to be incompressible, making re-running Compactor on a previously compressed folder much quicker.
+Build:
 
-(Yes, it's an if statement and a trivial hash database, hush)
-
-### Scalable and Fast
-
-Written in [Rust], a modern compiled systems programming language from Mozilla, Compactor can cope easily with large folders containing millions of files.
-
-![](https://i.imgur.com/VxyJmgR.png)
-
-## Caveats
-
-### Beta Software
-
-While it has been used successfully by thousands of people, Compactor should be used with care.  It is intended for compressing replacable software, not precious files.
-
-**Make backups**.  Report bugs.  Be nice.  You are reminded:
-
-```
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+```powershell
+cargo build --release
 ```
 
-It's in shouty legal text so you know I mean it.
+The executable will be written to:
 
-### Data Corruption
+```text
+target\release\Compactor.exe
+```
 
-There has been [one report][#40] of data corruption with open SQLite database files.  The author has been unable to reproduce this, but file locking was added to version 0.10 which should prevent them from being modified.
+CI builds and tests the same x64 MSVC release target on Windows.
 
-### Permissions
+## Usage
 
-Compactor currently has no mechanism to elevate its privileges using UAC for protected files.  If you're using a limited account you may need to run the program with elevated permissions.
+1. Choose a folder.
+2. Let Compactor analyse its contents.
+3. Review current disk usage and the estimated post-compaction savings.
+4. Adjust the compression mode or minimum-savings threshold in **Settings** if desired.
+5. Click **Compress**.
 
-Be careful what you compress.  System files should be skipped automatically, and the Windows folder should be in the list of default exclusions (if you want to compact Windows, check out its [CompactOS] feature), but you almost certainly don't want to blindly run this across your entire `C:\` drive.
+Use **Decompress** to remove WOF backing from files previously compressed by Compactor.
 
-### Modifiable Files
+## Safety and caveats
 
-Compaction is designed for **files that rarely change** &mdash; any modifications result in the file being uncompressed in its entirety.  In fact, simply opening a file in write mode will *hang* until the file is uncompressed, even if no changes are made.
+Compactor is best suited to application and game files that rarely change. Modifying a WOF-compressed file causes Windows to materialise it again, so folders that receive updates may benefit from being re-analysed and re-compressed afterward.
 
-This generally doesn't matter much for application folders, but it's not great for databases, logs, virtual machine images, and various other things that *hopefully* mostly live elsewhere.
+Avoid blindly compacting an entire system drive. The default exclusions protect common Windows-managed locations, but custom folders can still contain databases, virtual machines, active logs, or other write-heavy files that are poor candidates for this type of compression.
 
-If a game uses large files and in-place binary patching for updates, it might be worth adding to the exclusions list.
+Compactor does not elevate itself through UAC. Protected files may require launching the program with appropriate permissions.
 
-### Compatibility with Other Operating Systems
+As with any tool that changes filesystem metadata, keep backups of important data. Compactor is provided without warranty under the MIT License.
 
-Compaction is only supported on Windows 10 - earlier versions of Windows will be unable to access compressed files, though the rest of the filesystem should remain fully accessible.
+## Differences from upstream v0.10.1
 
-Linux and other operating systems will experience similar issues if the NTFS driver they're using lacks support.  As of time of writing, NTFS-3G has a [third-party plugin for the feature](https://github.com/ebiggers/ntfs-3g-system-compression).
+This fork intentionally stays close to the original program while addressing several long-standing issues:
 
-This is available on FreeBSD under [`sysutils/fusefs-ntfs-compression`](https://www.freshports.org/sysutils/fusefs-ntfs-compression/), while users of lesser platforms may need to [manually install it](https://wiki.archlinux.org/index.php/NTFS-3G#Compressed_files) like savages.
+- fixes Win32 `BOOL` handling for WOF `DeviceIoControl` calls
+- correctly handles `ERROR_COMPRESSION_NOT_BENEFICIAL`
+- uses the required read/write-attributes access for WOF operations
+- makes exclusions case-insensitive and ignores blank entries
+- skips encrypted, sparse, offline, reparse-point, and NTFS-compressed files before WOF classification
+- keys the incompressible cache by path + size + modification time so updated files are retried
+- adds zero-safe/overflow-safe size and progress accounting
+- makes compression progress byte-aware
+- adds configurable savings thresholds and estimated savings to the classic GUI
+- defaults to LZX and lets the estimator decide whether file contents are worth compressing
+- maintains a current Windows x64 CI build on stable Rust
 
-## Compression Results
+See [CHANGELOG.md](CHANGELOG.md) for the maintained change history.
 
-A totally-not-cherry-picked sample of compression results with the default settings:
+## Scope
 
-| Program | Size | Compacted | Ratio |
-|-|-:|-:|-|
-| AI War 2 | 2.43 GiB | 1.42 GiB  | 0.59x |
-| Big Pharma | 1.1 GiB | 711 MiB | 0.37x |
-| Crusader Kings 2 | 2.19 GiB | 1.29 GiB | 0.59x |
-| Deus Ex MD | 41.31 GiB | 28.06 GiB | 0.68x |
-| Infinifactory | 1.71 GiB | 742 MiB | 0.58x |
-| Satisfactory | 15.82 GiB | 10.45 GiB | 0.66x |
-| Space Engineers | 16.28 GiB | 9.4 GiB | 0.58x |
-| Stellaris | 7.76 GiB | 5.21 GiB | 0.67x |
-| Subnautica BZ | 10.62 GiB | 6.40 GiB | 0.60x |
-| The Long Dark | 7.42 GiB | 5.64 GiB | 0.76x |
-| Microsoft SDKs | 5.91 GiB | 2.45 GiB | 0.41x |
-| Visual Studio 2017 | 9.63 GiB | 4.77 GiB | 0.50x |
-| Windows Kits | 5.38 GiB | 2.03 GiB | 0.38x |
+Compactor is deliberately kept narrow. This fork does **not** add a scheduler, updater, background service, Steam database, telemetry, automatic algorithm switching, CompactOS controls, or default parallel compression. Those features can be useful elsewhere, but they are outside this project's goal of remaining a small, understandable compression GUI.
 
-A more comprehensive database of results is [maintained by the CompactGUI project](https://docs.google.com/spreadsheets/d/14CVXd6PTIYE9XlNpRsxJUGaoUzhC5titIC1rzQHI4yI/edit#gid=0).
+## Technical notes
 
-## Future
+The application is primarily written in [Rust](https://www.rust-lang.org/) and uses a local embedded web-view for the GUI. It does not require remote web resources to operate.
 
-There are many things I want to do with Compactor in future.  These include, but are certainly not limited to:
+WOF compression is applied through [`FSCTL_SET_EXTERNAL_BACKING`](https://learn.microsoft.com/windows-hardware/drivers/ifs/fsctl-set-external-backing) and removed through [`FSCTL_DELETE_EXTERNAL_BACKING`](https://learn.microsoft.com/windows-hardware/drivers/ifs/fsctl-delete-external-backing).
 
-* Make analysis optional.  It isn't fundamentally needed.
-* Multithreaded analysis/compaction for SSDs.
-* GUI rework of some description.  The longer I leave this the better Rust should get at it :P
-* Installer.  Why does this involve so much XML oh god.
-* Sign the binaries/installer.  This appears to involve money.
-* Scheduled task or a background service for set-it-and-forget-it operation.
+The sampled compressibility estimator comes from Thomas Hurst's [compresstimator](https://github.com/Freaky/compresstimator) project.
 
-Feature requests can be discussed in the [forum](https://github.com/Freaky/Compactor/discussions), or you may open [an issue](https://github.com/Freaky/Compactor/issues).
+## Credits
 
-## Alternatives
+Compactor was originally written by **Thomas Hurst (Freaky)**. This fork preserves that work and its MIT license while maintaining targeted fixes and improvements at [wefalltomorrow/Compactor](https://github.com/wefalltomorrow/Compactor).
 
-* [`compact.exe`] is a command-line tool that ships with Windows 10.  If you're familiar with the command line and batch files, maybe you'd prefer that. Weirdo.
-* [CompactGUI] is a popular Visual Basic program that shells out to `compact.exe` to do its work, instead of using the Windows API directly as Compactor does.  It has some... performance issues, particularly with larger folders.
-* NTFS has supported [LZNT1 compression][lznt1] since 1995, hidden behind a checkbox under `Properties` &rarr; `Advanced Attributes`.  It's less flexible and has a reputation for poor performance and issues with fragmentation, but is more set-it-and-forget-it.
-
-Are you aware of any others?  Do let me know.
-
-## Nerdy Technical Stuff
-
-Compactor is primarily written in [Rust].  The front-end is basically an embedded website driven by the [web-view] crate.  It does *not* depend on any remote resources or open any ports.
-
-Under the hood it uses [`DeviceIoControl`] with [`FSCTL_SET_EXTERNAL_BACKING`] and [`FSCTL_DELETE_EXTERNAL_BACKING`], and a few functions from [WofApi] (Windows Overlay Filesystem).  This is, of course, in part thanks to the [winapi] crate.  Eventually I hope to get around to finishing off some of my bindings and contributing them back.
-
-Compresstimation uses a simple linear sampling algorithm, passing blocks through LZ4 level 1 as a compressibility check and averaging across the entire file.  The code is [available on Github][compresstimator].
-
-The incompressible-files database is simply an append-only list of SipHash128 path hashes.  It should be safe to share between multiple instances if you want to compress different drives at the same time.  It lives in `%APPDATA%\Local\Freaky\Compactor`.
-
-## Author
-
-Compactor is written by [Thomas Hurst], a nerdy, aloof weirdo from the north-east of England, and a programmer for about 25 years.
-
-He mostly works with FreeBSD and focuses on Unix platforms, but uses Windows because he plays games instead of having a social life.
-
-You can find him on Mastodon at [@Freaky@hachyderm.io], or bug him on IRC as `Freaky` on [libera.chat].
-
-[`compact.exe`]: https://docs.microsoft.com/en-us/windows-server/administration/windows-commands/compact
-[Rust]: https://www.rust-lang.org/
-[CompactGUI]: https://github.com/ImminentFate/CompactGUI
-[web-view]: https://github.com/Boscop/web-view
-[webview]: https://github.com/Freaky/webview/tree/various-fixes
-[`DeviceIoControl`]: https://docs.microsoft.com/en-us/windows/desktop/api/ioapiset/nf-ioapiset-deviceiocontrol
-[`FSCTL_SET_EXTERNAL_BACKING`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ifs/fsctl-set-external-backing
-[`FSCTL_DELETE_EXTERNAL_BACKING`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ifs/fsctl-delete-external-backing
-[WofApi]: https://docs.microsoft.com/en-us/windows/desktop/api/wofapi/
-[Compression API]: https://docs.microsoft.com/en-gb/windows/desktop/cmpapi/using-the-compression-api
-[winapi]: https://github.com/retep998/winapi-rs
-[CompactOS]: https://technet.microsoft.com/en-us/windows/dn940129(v=vs.60)
-[Thomas Hurst]: https://hur.st/
-[@Freaky@hachyderm.io]: https://hachyderm.io/@Freaky
-[libera.chat]: https://libera.chat/
-[overlapped IO]: https://docs.microsoft.com/en-us/windows/desktop/sync/synchronization-and-overlapped-input-and-output
-[compresstimator]: https://github.com/Freaky/compresstimator
-[lznt1]: https://en.wikipedia.org/wiki/NTFS#File_compression
-[#40]: https://github.com/Freaky/Compactor/issues/40
+See [LICENSE.txt](LICENSE.txt) for license terms.

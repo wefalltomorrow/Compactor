@@ -2,8 +2,9 @@
 name = "compactor"
 version = "0.10.1"
 authors = ["Thomas Hurst <tom@hur.st>"]
-homepage = "https://github.com/Freaky/Compactor"
-description = "An interface to Windows 10 filesystem compression"
+homepage = "https://github.com/wefalltomorrow/Compactor"
+repository = "https://github.com/wefalltomorrow/Compactor"
+description = "A lightweight GUI for Windows WOF filesystem compression"
 edition = "2018"
 license = "MIT"
 
