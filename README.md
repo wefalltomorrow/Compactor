@@ -4,6 +4,8 @@ Compactor is a small Windows GUI for applying Windows Overlay Filter (WOF) files
 
 This repository is a maintained fork of [Freaky/Compactor](https://github.com/Freaky/Compactor). It retains the original Rust GUI and WOF-based compression model while fixing known issues and improving analysis and maintenance.
 
+![Compactor](docs/compactor.png)
+
 ## Features
 
 - XPRESS4K, XPRESS8K, XPRESS16K, and LZX compression
@@ -23,9 +25,9 @@ This repository is a maintained fork of [Freaky/Compactor](https://github.com/Fr
 - Compression: `LZX`
 - Minimum estimated savings: `1%`
 - Excluded paths:
-  - `*:\Windows*`
-  - `*:\System Volume Information*`
-  - `*:\$*`
+  - `*:\\Windows*`
+  - `*:\\System Volume Information*`
+  - `*:\\$*`
 
 File extensions are not used to decide whether a file should be compressed. Eligible files are sampled and compared against the configured savings threshold.
 
@@ -92,7 +94,7 @@ cargo build --release
 The executable is written to:
 
 ```text
-target\release\Compactor.exe
+target\\release\\Compactor.exe
 ```
 
 ## Technical details
