@@ -31,9 +31,7 @@ File extensions are not used to decide whether a file should be compressed. Elig
 
 ## Installation
 
-The repository builds a Windows x64 MSVC executable in GitHub Actions.
-
-Until a tagged release is published, download the `Compactor-x64` artifact from the latest successful [Windows x64 build](https://github.com/wefalltomorrow/Compactor/actions). GitHub Actions artifacts require a GitHub account and expire after their retention period.
+Download the latest Windows x64 executable from the [Releases](https://github.com/wefalltomorrow/Compactor/releases) page.
 
 Compactor is portable and does not require an installer or background service.
 
