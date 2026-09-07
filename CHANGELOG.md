@@ -18,7 +18,9 @@
 - Compression progress is byte-aware rather than relying only on file count.
 - Incompressible-cache keys now include path, file size, and modification time so changed files are automatically reconsidered.
 - The cache backing file is now `incompressible-v2.dat` to avoid stale path-only entries.
-- Estimated-savings output has a dedicated legend marker in the classic GUI.
+- Estimated-savings output has a dedicated legend marker in the GUI.
+- Removed decorative button and navigation glyphs from the GUI.
+- Updated the compression-mode labels to show LZX as the default.
 
 ### Fixed
 
@@ -35,6 +37,7 @@
 - Removed deprecated Cargo config naming and legacy WinAPI struct-macro warnings.
 - Removed unused background helper code.
 - Updated project documentation and package metadata for this maintained fork while preserving upstream attribution.
+- Reworked user-facing documentation and About text to use concise project wording.
 
 ## [0.10.1] - 2020-12-22
 
