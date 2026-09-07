@@ -23,6 +23,7 @@ pub enum GuiRequest {
     SaveConfig {
         decimal: bool,
         compression: String,
+        min_savings_percent: f32,
         excludes: String,
     },
     ResetConfig,
@@ -47,6 +48,7 @@ pub enum GuiResponse {
     Config {
         decimal: bool,
         compression: String,
+        min_savings_percent: f32,
         excludes: String,
     },
     Folder {
@@ -83,7 +85,7 @@ impl<T> GuiWrapper<T> {
                 .and_then(|s| serde_json::to_string(&s))
                 .expect("serialize")
         );
-        self.0.dispatch(move |wv| wv.eval(&js)).ok(); // let errors bubble through via messages
+        self.0.dispatch(move |wv| wv.eval(&js)).ok();
     }
 
     pub fn version(&self) {
@@ -99,6 +101,7 @@ impl<T> GuiWrapper<T> {
         self.send(&GuiResponse::Config {
             decimal: s.decimal,
             compression: s.compression.to_string(),
+            min_savings_percent: s.min_savings_percent,
             excludes: s.excludes.join("\n"),
         });
     }
@@ -144,7 +147,9 @@ impl<T> GuiWrapper<T> {
         let (tx, rx) = bounded::<Option<PathBuf>>(1);
         let _ = self.0.dispatch(move |_| {
             let folder = known_folder(&knownfolders::FOLDERID_ProgramFiles);
-            let folder = folder.and_then(|path| path.to_str().map(str::to_string)).unwrap_or_default();
+            let folder = folder
+                .and_then(|path| path.to_str().map(str::to_string))
+                .unwrap_or_default();
             let params = wfd::DialogParams {
                 options: wfd::FOS_PICKFOLDERS,
                 title: "Select a directory",
@@ -152,7 +157,9 @@ impl<T> GuiWrapper<T> {
                 ..Default::default()
             };
             let _ = tx.send(
-                wfd::open_dialog(params).map(|res| res.selected_file_path).ok()
+                wfd::open_dialog(params)
+                    .map(|res| res.selected_file_path)
+                    .ok(),
             );
             Ok(())
         });
@@ -186,7 +193,7 @@ pub fn spawn_gui() {
         .content(Content::Html(html))
         .size(750, 430)
         .resizable(true)
-        .debug(true)
+        .debug(cfg!(debug_assertions))
         .user_data(())
         .invoke_handler(move |mut webview, arg| {
             match serde_json::from_str::<GuiRequest>(arg) {
@@ -196,15 +203,17 @@ pub fn spawn_gui() {
                 Ok(GuiRequest::SaveConfig {
                     decimal,
                     compression,
+                    min_savings_percent,
                     excludes,
                 }) => {
                     let s = Config {
                         decimal,
                         compression: compression.parse().unwrap_or_default(),
+                        min_savings_percent,
                         excludes: excludes.split('\n').map(str::to_owned).collect(),
                     };
 
-                    if let Err(msg) = s.globset() {
+                    if let Err(msg) = s.validate() {
                         tinyfiledialogs::message_box_ok(
                             "Settings Error",
                             &msg,
@@ -216,6 +225,7 @@ pub fn spawn_gui() {
                             &GuiResponse::Config {
                                 decimal: s.decimal,
                                 compression: s.compression.to_string(),
+                                min_savings_percent: s.min_savings_percent,
                                 excludes: s.excludes.join("\n"),
                             },
                         );
@@ -239,6 +249,7 @@ pub fn spawn_gui() {
                         &GuiResponse::Config {
                             decimal: s.decimal,
                             compression: s.compression.to_string(),
+                            min_savings_percent: s.min_savings_percent,
                             excludes: s.excludes.join("\n"),
                         },
                     );

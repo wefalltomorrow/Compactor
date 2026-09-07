@@ -2,7 +2,9 @@
 
 use std::convert::TryFrom;
 use std::ffi::{CString, OsStr};
+use std::io;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
 use std::str::FromStr;
@@ -14,48 +16,49 @@ use winapi::shared::ntdef::PVOID;
 use winapi::shared::winerror::{HRESULT_CODE, SUCCEEDED};
 use winapi::um::ioapiset::DeviceIoControl;
 use winapi::um::winioctl::{FSCTL_DELETE_EXTERNAL_BACKING, FSCTL_SET_EXTERNAL_BACKING};
-use winapi::um::winnt::{HANDLE, HRESULT, LPCWSTR};
+use winapi::um::winnt::{
+    FILE_READ_DATA, FILE_WRITE_ATTRIBUTES, HANDLE, HRESULT, LPCWSTR,
+};
 use winapi::um::winver::{GetFileVersionInfoA, GetFileVersionInfoSizeA, VerQueryValueA};
-use winapi::STRUCT;
 
-STRUCT! {
-    struct _WOF_FILE_COMPRESSION_INFO_V1 {
-        Algorithm: ULONG,
-        Flags: ULONG,
-    }
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct _WOF_FILE_COMPRESSION_INFO_V1 {
+    Algorithm: ULONG,
+    Flags: ULONG,
 }
 
-STRUCT! {
-    struct _WOF_EXTERNAL_INFO {
-        Version: ULONG,
-        Provider: ULONG,
-    }
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct _WOF_EXTERNAL_INFO {
+    Version: ULONG,
+    Provider: ULONG,
 }
 
-STRUCT! {
-    struct _FILE_PROVIDER_EXTERNAL_INFO_V1 {
-        Version: ULONG,
-        Algorithm: ULONG,
-        Flags: ULONG,
-    }
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct _FILE_PROVIDER_EXTERNAL_INFO_V1 {
+    Version: ULONG,
+    Algorithm: ULONG,
+    Flags: ULONG,
 }
 
-STRUCT! {
-    struct VS_FIXEDFILEINFO {
-        dwSignature: DWORD,
-        dwStrucVersion: DWORD,
-        dwFileVersionMS: DWORD,
-        dwFileVersionLS: DWORD,
-        dwProductVersionMS: DWORD,
-        dwProductVersionLS: DWORD,
-        dwFileFlagsMask: DWORD,
-        dwFileFlags: DWORD,
-        dwFileOS: DWORD,
-        dwFileType: DWORD,
-        dwFileSubtype: DWORD,
-        dwFileDateMS: DWORD,
-        dwFileDateLS: DWORD,
-    }
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct VS_FIXEDFILEINFO {
+    dwSignature: DWORD,
+    dwStrucVersion: DWORD,
+    dwFileVersionMS: DWORD,
+    dwFileVersionLS: DWORD,
+    dwProductVersionMS: DWORD,
+    dwProductVersionLS: DWORD,
+    dwFileFlagsMask: DWORD,
+    dwFileFlags: DWORD,
+    dwFileOS: DWORD,
+    dwFileType: DWORD,
+    dwFileSubtype: DWORD,
+    dwFileDateMS: DWORD,
+    dwFileDateLS: DWORD,
 }
 
 const VS_FIXEDFILEINFO_SIGNATURE: DWORD = 0xFEEF_04BD;
@@ -65,8 +68,7 @@ const FILE_PROVIDER_COMPRESSION_LZX: ULONG = 1;
 const FILE_PROVIDER_COMPRESSION_XPRESS8K: ULONG = 2;
 const FILE_PROVIDER_COMPRESSION_XPRESS16K: ULONG = 3;
 
-const ERROR_SUCCESS: HRESULT = 0;
-const ERROR_COMPRESSION_NOT_BENEFICIAL: HRESULT = 344;
+const ERROR_COMPRESSION_NOT_BENEFICIAL: i32 = 344;
 
 const FILE_PROVIDER_CURRENT_VERSION: ULONG = 1;
 const WOF_CURRENT_VERSION: ULONG = 1;
@@ -101,7 +103,7 @@ impl From<Compression> for _FILE_PROVIDER_EXTERNAL_INFO_V1 {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Compression {
     Xpress4k,
     Xpress8k,
@@ -165,7 +167,7 @@ impl From<Compression> for ULONG {
     }
 }
 
-pub fn system_supports_compression() -> std::io::Result<bool> {
+pub fn system_supports_compression() -> io::Result<bool> {
     let dll = CString::new("WofUtil.dll").unwrap();
     let path = CString::new("\\").unwrap();
     let mut handle = 0;
@@ -173,7 +175,7 @@ pub fn system_supports_compression() -> std::io::Result<bool> {
     let len = unsafe { GetFileVersionInfoSizeA(dll.as_ptr(), &mut handle) };
 
     if len == 0 {
-        return Err(std::io::Error::last_os_error());
+        return Err(io::Error::last_os_error());
     }
 
     let mut buf = vec![0u8; len as usize];
@@ -188,7 +190,7 @@ pub fn system_supports_compression() -> std::io::Result<bool> {
     };
 
     if ret == 0 {
-        return Err(std::io::Error::last_os_error());
+        return Err(io::Error::last_os_error());
     }
 
     let mut pinfo: PVOID = std::ptr::null_mut();
@@ -204,7 +206,7 @@ pub fn system_supports_compression() -> std::io::Result<bool> {
     };
 
     if ret == 0 {
-        return Err(std::io::Error::last_os_error());
+        return Err(io::Error::last_os_error());
     }
 
     assert!(pinfo_size as usize >= std::mem::size_of::<VS_FIXEDFILEINFO>());
@@ -216,7 +218,7 @@ pub fn system_supports_compression() -> std::io::Result<bool> {
     Ok((pinfo.dwFileVersionMS >> 16) & 0xffff >= 10)
 }
 
-pub fn file_supports_compression<P: AsRef<Path>>(path: P) -> std::io::Result<bool> {
+pub fn file_supports_compression<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     let file = std::fs::File::open(path)?;
     let mut version: ULONG = 0;
 
@@ -235,7 +237,7 @@ pub fn file_supports_compression<P: AsRef<Path>>(path: P) -> std::io::Result<boo
     }
 }
 
-pub fn detect_compression<P: AsRef<OsStr>>(path: P) -> std::io::Result<Option<Compression>> {
+pub fn detect_compression<P: AsRef<OsStr>>(path: P) -> io::Result<Option<Compression>> {
     let mut p: Vec<u16> = path.as_ref().encode_wide().collect();
     p.push(0);
 
@@ -261,7 +263,7 @@ pub fn detect_compression<P: AsRef<OsStr>>(path: P) -> std::io::Result<Option<Co
             Ok(None)
         }
     } else {
-        Err(std::io::Error::from_raw_os_error(HRESULT_CODE(ret)))
+        Err(io::Error::from_raw_os_error(HRESULT_CODE(ret)))
     }
 }
 
@@ -269,15 +271,18 @@ unsafe fn as_byte_slice<T: Sized + Copy>(p: &T) -> &[u8] {
     std::slice::from_raw_parts((p as *const T) as *const u8, std::mem::size_of::<T>())
 }
 
-pub fn compress_file<P: AsRef<Path>>(path: P, compression: Compression) -> std::io::Result<bool> {
-    let file = std::fs::File::open(path)?;
+fn open_for_wof<P: AsRef<Path>>(path: P) -> io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .access_mode(FILE_READ_DATA | FILE_WRITE_ATTRIBUTES)
+        .open(path)
+}
+
+pub fn compress_file<P: AsRef<Path>>(path: P, compression: Compression) -> io::Result<bool> {
+    let file = open_for_wof(path)?;
     compress_file_handle(&file, compression)
 }
 
-pub fn compress_file_handle(
-    file: &std::fs::File,
-    compression: Compression,
-) -> std::io::Result<bool> {
+pub fn compress_file_handle(file: &std::fs::File, compression: Compression) -> io::Result<bool> {
     const LEN: usize = std::mem::size_of::<_WOF_EXTERNAL_INFO>()
         + std::mem::size_of::<_FILE_PROVIDER_EXTERNAL_INFO_V1>();
 
@@ -305,26 +310,25 @@ pub fn compress_file_handle(
         )
     };
 
-    // BOOL my arse
-    if SUCCEEDED(ret) {
+    // DeviceIoControl returns a Win32 BOOL, not an HRESULT.
+    if ret != 0 {
         Ok(true)
     } else {
-        let e = HRESULT_CODE(ret);
-
-        if e == ERROR_COMPRESSION_NOT_BENEFICIAL {
+        let err = io::Error::last_os_error();
+        if err.raw_os_error() == Some(ERROR_COMPRESSION_NOT_BENEFICIAL) {
             Ok(false)
         } else {
-            Err(std::io::Error::from_raw_os_error(e))
+            Err(err)
         }
     }
 }
 
-pub fn uncompress_file<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
-    let file = std::fs::File::open(path)?;
+pub fn uncompress_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
+    let file = open_for_wof(path)?;
     uncompress_file_handle(&file)
 }
 
-pub fn uncompress_file_handle(file: &std::fs::File) -> std::io::Result<()> {
+pub fn uncompress_file_handle(file: &std::fs::File) -> io::Result<()> {
     let mut bytes_returned: DWORD = 0;
 
     let ret = unsafe {
@@ -340,10 +344,10 @@ pub fn uncompress_file_handle(file: &std::fs::File) -> std::io::Result<()> {
         )
     };
 
-    if SUCCEEDED(ret) {
+    if ret != 0 {
         Ok(())
     } else {
-        Err(std::io::Error::from_raw_os_error(HRESULT_CODE(ret)))
+        Err(io::Error::last_os_error())
     }
 }
 

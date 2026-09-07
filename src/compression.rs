@@ -15,6 +15,7 @@ use crate::compact::{self, Compression};
 #[derive(Debug)]
 pub struct BackgroundCompactor {
     compression: Option<Compression>,
+    ratio_limit: f32,
     files_in: Receiver<(PathBuf, u64)>,
     files_out: Sender<(PathBuf, io::Result<bool>)>,
 }
@@ -22,18 +23,24 @@ pub struct BackgroundCompactor {
 impl BackgroundCompactor {
     pub fn new(
         compression: Option<Compression>,
+        ratio_limit: f32,
         files_in: Receiver<(PathBuf, u64)>,
         files_out: Sender<(PathBuf, io::Result<bool>)>,
     ) -> Self {
         Self {
             compression,
+            ratio_limit,
             files_in,
             files_out,
         }
     }
 }
 
-fn handle_file(file: &PathBuf, compression: Option<Compression>) -> io::Result<bool> {
+fn handle_file(
+    file: &PathBuf,
+    compression: Option<Compression>,
+    ratio_limit: f32,
+) -> io::Result<bool> {
     let est = Compresstimator::with_block_size(8192);
     let meta = std::fs::metadata(&file)?;
     let handle = std::fs::OpenOptions::new()
@@ -44,7 +51,7 @@ fn handle_file(file: &PathBuf, compression: Option<Compression>) -> io::Result<b
 
     let ret = match compression {
         Some(compression) => match est.compresstimate(&handle, meta.len()) {
-            Ok(ratio) if ratio < 0.99 => compact::compress_file_handle(&handle, compression),
+            Ok(ratio) if ratio < ratio_limit => compact::compress_file_handle(&handle, compression),
             Ok(_) => Ok(false),
             Err(e) => Err(e),
         },
@@ -73,7 +80,7 @@ impl Background for BackgroundCompactor {
             }
 
             let file = file.0;
-            let ret = handle_file(&file, self.compression);
+            let ret = handle_file(&file, self.compression, self.ratio_limit);
             if self.files_out.send((file, ret)).is_err() {
                 break;
             }

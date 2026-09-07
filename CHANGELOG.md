@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Configurable minimum estimated savings threshold in Settings; default is 1%.
+- Estimated post-compaction size and additional savings during analysis.
+- Windows x64 MSVC release CI on current stable Rust, with a downloadable `Compactor-x64` Actions artifact.
+
+### Changed
+
+- Default compression algorithm is now LZX.
+- Analysis and compression now use the same sampled compressibility threshold logic.
+- Removed blanket file-extension exclusions; archives, media, game containers, and other files are judged by sampled contents instead of filename.
+- Default exclusions are limited to Windows, System Volume Information, and Windows-managed root `$*` paths.
+- Exclusion matching is case-insensitive and ignores blank/whitespace-only entries.
+- Compression progress is byte-aware rather than relying only on file count.
+- Incompressible-cache keys now include path, file size, and modification time so changed files are automatically reconsidered.
+- The cache backing file is now `incompressible-v2.dat` to avoid stale path-only entries.
+- Estimated-savings output has a dedicated legend marker in the GUI.
+- Removed decorative button and navigation glyphs from the GUI.
+- Updated the compression-mode labels to show LZX as the default.
+
+### Fixed
+
+- Correctly treat `DeviceIoControl` as returning a Win32 `BOOL` rather than an HRESULT.
+- Correctly surface Win32 errors while handling `ERROR_COMPRESSION_NOT_BENEFICIAL` as a normal no-benefit result.
+- Open WOF targets with the read-data/write-attributes access required by the operation.
+- Skip encrypted, sparse, offline, reparse-point, and NTFS-compressed special files before WOF classification.
+- Use zero-safe progress calculations and saturating size arithmetic to avoid invalid progress or unsigned underflow/overflow edge cases.
+- Preserve clear stopped/cancelled state handling.
+
+### Maintenance
+
+- Updated GitHub Actions to current `actions/checkout` and `actions/upload-artifact` majors.
+- Removed deprecated Cargo config naming and legacy WinAPI struct-macro warnings.
+- Removed unused background helper code.
+- Updated project documentation and package metadata for this maintained fork while preserving upstream attribution.
+- Reworked user-facing documentation and About text to use concise project wording.
+
 ## [0.10.1] - 2020-12-22
 
 ### Fixed

@@ -1,10 +1,14 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::compact::Compression;
+
+fn default_min_savings_percent() -> f32 {
+    1.0
+}
 
 #[derive(Debug, Default)]
 pub struct ConfigFile {
@@ -16,6 +20,8 @@ pub struct ConfigFile {
 pub struct Config {
     pub decimal: bool,
     pub compression: Compression,
+    #[serde(default = "default_min_savings_percent")]
+    pub min_savings_percent: f32,
     pub excludes: Vec<String>,
 }
 
@@ -23,54 +29,12 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             decimal: false,
-            compression: Compression::default(),
+            compression: Compression::Lzx,
+            min_savings_percent: default_min_savings_percent(),
             excludes: vec![
                 "*:\\Windows*",
                 "*:\\System Volume Information*",
                 "*:\\$*",
-                "*.7z",
-                "*.aac",
-                "*.avi",
-                "*.ba",
-                "*.{bik,bk2,bnk,pc_binkvid}",
-                "*.br",
-                "*.bz2",
-                "*.cab",
-                "*.dl_",
-                "*.docx",
-                "*.flac",
-                "*.flv",
-                "*.gif",
-                "*.gz",
-                "*.jpeg",
-                "*.jpg",
-                "*.log",
-                "*.lz4",
-                "*.lzma",
-                "*.lzx",
-                "*.m[24]v",
-                "*.m4a",
-                "*.mkv",
-                "*.mp[234]",
-                "*.mpeg",
-                "*.mpg",
-                "*.ogg",
-                "*.onepkg",
-                "*.png",
-                "*.pptx",
-                "*.rar",
-                "*.upk",
-                "*.vob",
-                "*.vs[st]x",
-                "*.wem",
-                "*.webm",
-                "*.wm[afv]",
-                "*.xap",
-                "*.xnb",
-                "*.xlsx",
-                "*.xz",
-                "*.zst",
-                "*.zstd",
             ]
             .into_iter()
             .map(String::from)
@@ -116,11 +80,32 @@ impl ConfigFile {
 }
 
 impl Config {
+    pub fn ratio_limit(&self) -> f32 {
+        1.0 - (self.min_savings_percent.clamp(0.0, 100.0) / 100.0)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.min_savings_percent.is_finite()
+            || self.min_savings_percent < 0.0
+            || self.min_savings_percent > 100.0
+        {
+            return Err("Minimum estimated savings must be between 0 and 100%.".to_string());
+        }
+
+        self.globset().map(|_| ())
+    }
+
     pub fn globset(&self) -> Result<GlobSet, String> {
         let mut globs = GlobSetBuilder::new();
-        for glob in &self.excludes {
-            globs.add(Glob::new(glob).map_err(|e| e.to_string())?);
+
+        for pattern in self.excludes.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            let glob = GlobBuilder::new(pattern)
+                .case_insensitive(true)
+                .build()
+                .map_err(|e| e.to_string())?;
+            globs.add(glob);
         }
+
         globs.build().map_err(|e| e.to_string())
     }
 }
@@ -130,9 +115,36 @@ fn test_config() {
     let s = Config::default();
 
     assert!(s.globset().is_ok());
-    let gs = s.globset().unwrap();
+    assert_eq!(s.compression, Compression::Lzx);
+    assert_eq!(s.min_savings_percent, 1.0);
+    assert!((s.ratio_limit() - 0.99).abs() < f32::EPSILON);
 
-    assert!(gs.is_match("C:\\foo\\bar\\hmm.rar"));
+    let gs = s.globset().unwrap();
     assert!(gs.is_match("C:\\Windows\\System32\\floop\\bla.txt"));
-    assert!(gs.is_match("C:\\x.lz4"));
+    assert!(gs.is_match("C:\\System Volume Information\\tracking.log"));
+    assert!(gs.is_match("C:\\$Recycle.Bin\\example.bin"));
+
+    // File extensions are intentionally not excluded by default. The sampled
+    // estimator and configured savings threshold decide whether compression is
+    // worthwhile instead of assuming compressibility from a filename.
+    assert!(!gs.is_match("C:\\foo\\archive.rar"));
+    assert!(!gs.is_match("C:\\foo\\data.lz4"));
+    assert!(!gs.is_match("C:\\foo\\PHOTO.JPG"));
+}
+
+#[test]
+fn blank_excludes_are_ignored() {
+    let mut s = Config::default();
+    s.excludes.push(String::new());
+    s.excludes.push("   ".to_string());
+
+    let gs = s.globset().unwrap();
+    assert!(!gs.is_match("C:\\foo\\ordinary.txt"));
+}
+
+#[test]
+fn invalid_threshold_is_rejected() {
+    let mut s = Config::default();
+    s.min_savings_percent = 101.0;
+    assert!(s.validate().is_err());
 }
