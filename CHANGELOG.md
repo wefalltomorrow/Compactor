@@ -6,7 +6,7 @@
 
 ### Added
 
-- In-app viewer for WOF-compressed files and containing folders, with path filtering and pagination for large scans.
+- In-app viewer for folders containing WOF-compressed files, with path filtering and pagination for large scans.
 
 ### Changed
 

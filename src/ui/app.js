@@ -251,7 +251,7 @@ var Gui = (function() {
 	"use strict";
 
 	var compressedView = {
-		view: "files",
+		view: "folders",
 		page: 0,
 		pages: 1
 	};
@@ -305,7 +305,7 @@ var Gui = (function() {
 		},
 
 		open_compressed_view: function() {
-			compressedView.view = "files";
+			compressedView.view = "folders";
 			compressedView.page = 0;
 			compressedView.pages = 1;
 			$("#Compressed_View_Search").val("");
@@ -320,17 +320,12 @@ var Gui = (function() {
 			Action.view_compressed(compressedView.view, query, requestedPage);
 		},
 
-		set_compressed_mode: function(view) {
-			compressedView.view = view == "folders" ? "folders" : "files";
-			Gui.request_compressed(0);
-		},
-
 		compressed_page: function(delta) {
 			Gui.request_compressed(compressedView.page + delta);
 		},
 
 		set_compressed_view: function(data) {
-			compressedView.view = data.view == "folders" ? "folders" : "files";
+			compressedView.view = "folders";
 			compressedView.page = data.page;
 			compressedView.pages = data.pages;
 
@@ -342,31 +337,20 @@ var Gui = (function() {
 				Util.bytes_to_human(Math.max(0, data.logical_size - data.physical_size)) + " saved"
 			);
 
-			$(".compressed-view-mode").removeClass("active");
-			if (compressedView.view == "folders") {
-				$("#Button_Compressed_Folders").addClass("active");
-			} else {
-				$("#Button_Compressed_Files").addClass("active");
-			}
-
 			var head = $("#Compressed_View_Head").empty();
 			var body = $("#Compressed_View_Body").empty();
 			var header = $("<tr></tr>");
 
-			if (compressedView.view == "folders") {
-				addTableCell(header, "Files");
-			}
+			addTableCell(header, "Files");
 			addTableCell(header, "Logical");
 			addTableCell(header, "On-disk");
 			addTableCell(header, "Saved");
-			addTableCell(header, compressedView.view == "folders" ? "Folder" : "File", "path");
+			addTableCell(header, "Folder", "path");
 			head.append(header);
 
 			data.items.forEach(function(item) {
 				var row = $("<tr></tr>");
-				if (compressedView.view == "folders") {
-					addTableCell(row, Util.format_number(item.count, 0));
-				}
+				addTableCell(row, Util.format_number(item.count, 0));
 				addTableCell(row, Util.bytes_to_human(item.logical_size));
 				addTableCell(row, Util.bytes_to_human(item.physical_size));
 				addTableCell(row, Util.bytes_to_human(Math.max(0, item.logical_size - item.physical_size)));
@@ -378,9 +362,9 @@ var Gui = (function() {
 				var empty = $("<tr></tr>");
 				empty.append(
 					$("<td></td>")
-						.attr("colspan", compressedView.view == "folders" ? 5 : 4)
+						.attr("colspan", 5)
 						.addClass("empty")
-						.text("No matching compressed " + compressedView.view)
+						.text("No matching compressed folders")
 				);
 				body.append(empty);
 			}
@@ -388,7 +372,7 @@ var Gui = (function() {
 			$("#Compressed_View_Page").text(
 				"Page " + Util.format_number(data.page + 1, 0) + " of " +
 				Util.format_number(data.pages, 0) + " - " +
-				Util.format_number(data.total, 0) + " " + compressedView.view
+				Util.format_number(data.total, 0) + " folders"
 			);
 			$("#Button_Compressed_Previous").prop("disabled", data.page <= 0);
 			$("#Button_Compressed_Next").prop("disabled", data.page + 1 >= data.pages);

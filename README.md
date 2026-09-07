@@ -16,7 +16,7 @@ This repository is a maintained fork of [Freaky/Compactor](https://github.com/Fr
 - Storage-aware multithreaded analysis and compression on SSDs
 - Single-threaded HDD operation by default
 - HDD analysis sampling designed to reduce seek overhead
-- In-app searchable viewer for WOF-compressed files and their containing folders
+- In-app searchable viewer for folders containing WOF-compressed files
 - Pause, resume, and stop controls
 - Timestamp preservation after compression and decompression
 - Automatic retry of previously incompressible files after they change
@@ -53,7 +53,7 @@ Compactor is portable and does not require an installer or background service.
 4. Change the compression mode, savings threshold, or thread limit in Settings if required.
 5. Select Compress.
 
-Use Decompress to remove WOF backing from files previously compressed with Compactor. After analysis, select View beside the compressed count to browse compressed files and folders inside Compactor. The viewer includes path filtering and pagination for large scans.
+Use Decompress to remove WOF backing from files previously compressed with Compactor. After analysis, select View beside the compressed count to browse folders containing WOF-compressed files inside Compactor. The viewer includes path filtering and pagination for large scans.
 
 ## Notes
 
@@ -83,7 +83,7 @@ This fork includes the following changes:
 - Removal of default file-extension exclusions
 - Storage-aware worker selection and parallel SSD processing
 - Reduced-seek HDD analysis sampling
-- In-app compressed-file and folder viewer with filtering and pagination
+- In-app compressed-folder viewer with filtering and pagination
 - Windows x64 CI on stable Rust
 
 See [CHANGELOG.md](CHANGELOG.md) for the full change history.
