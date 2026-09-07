@@ -535,7 +535,7 @@ fn it_walks() {
 
     let task = BackgroundHandle::spawn(scanner);
 
-    let deadline = Instant::now() + Duration::from_millis(2000));
+    let deadline = Instant::now() + Duration::from_millis(2000);
 
     loop {
         let ret = task.wait_timeout(Duration::from_millis(100));
