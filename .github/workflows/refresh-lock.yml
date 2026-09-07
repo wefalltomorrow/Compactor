@@ -7,22 +7,24 @@ on:
 permissions:
   contents: read
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   lockfile:
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Refresh lockfile
-        run: cargo generate-lockfile
+      - name: Update package version only
+        shell: pwsh
+        run: |
+          $content = Get-Content Cargo.lock -Raw
+          $pattern = '(?ms)(\[\[package\]\]\r?\nname = "compactor"\r?\nversion = ")0\.11\.0(")'
+          $updated = [regex]::Replace($content, $pattern, '${1}0.11.1$2', 1)
+          if ($updated -eq $content) {
+            throw 'Could not update the Compactor package version in Cargo.lock.'
+          }
+          Set-Content Cargo.lock -Value $updated -NoNewline
 
       - name: Upload lockfile
         uses: actions/upload-artifact@v7
