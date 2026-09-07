@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- On-demand report listing WOF-compressed files and the folders containing them.
+
 ## [0.11.1] - 2026-09-07
 
 ### Added

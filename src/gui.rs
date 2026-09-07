@@ -31,6 +31,7 @@ pub enum GuiRequest {
     ChooseFolder,
     Compress,
     Decompress,
+    ViewCompressed,
     Pause,
     Resume,
     Analyse,

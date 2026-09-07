@@ -169,6 +169,10 @@ var Action = (function() {
 			external.invoke(JSON.stringify({ type: 'Decompress' }));
 		},
 
+		view_compressed: function() {
+			external.invoke(JSON.stringify({ type: 'ViewCompressed' }));
+		},
+
 		pause: function() {
 			external.invoke(JSON.stringify({ type: 'Pause' }));
 		},
@@ -343,6 +347,7 @@ var Gui = (function() {
 			$("#Button_Analyse").hide();
 			$("#Button_Compress").hide();
 			$("#Button_Decompress").hide();
+			$("#Button_View_Compressed").hide();
 			$("#Command").show();
 		},
 
@@ -353,6 +358,7 @@ var Gui = (function() {
 			$("#Button_Analyse").hide();
 			$("#Button_Compress").hide();
 			$("#Button_Decompress").hide();
+			$("#Button_View_Compressed").hide();
 		},
 
 		paused: function() {
@@ -383,8 +389,10 @@ var Gui = (function() {
 
 			if ($("#File_Count_Compressed").text() != "0") {
 				$("#Button_Decompress").show();
+				$("#Button_View_Compressed").show();
 			} else {
 				$("#Button_Decompress").hide();
+				$("#Button_View_Compressed").hide();
 			}
 		},
 

@@ -204,3 +204,11 @@ ul {
 li {
   display: inline-block;
 }
+
+#Analysis button.details {
+  background-color: rgb(118, 118, 118);
+  padding: 2px 6px;
+  margin: 0 0 0 6px;
+  font-size: 0.75em;
+  vertical-align: middle;
+}
