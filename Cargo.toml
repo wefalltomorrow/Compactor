@@ -1,6 +1,6 @@
 [package]
 name = "compactor"
-version = "0.11.0"
+version = "0.11.1"
 authors = ["Thomas Hurst <tom@hur.st>"]
 homepage = "https://github.com/wefalltomorrow/Compactor"
 repository = "https://github.com/wefalltomorrow/Compactor"
