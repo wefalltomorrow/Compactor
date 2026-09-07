@@ -234,7 +234,7 @@ var Response = (function() {
 	};
 })();
 
-// Anything poking the GUI lives here
+// GUI state and updates
 var Gui = (function() {
 	"use strict";
 
@@ -306,7 +306,7 @@ var Gui = (function() {
 			button.empty();
 			bits.forEach(function(bit) {
 				button.append(bit);
-				button.append($("<span>❱</span>"));
+				button.append($("<span>&gt;</span>"));
 			});
 			button.append(end);
 
