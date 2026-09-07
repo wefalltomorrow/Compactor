@@ -296,6 +296,7 @@ fn apply_estimate(
 fn estimate_candidates(
     path: &Path,
     mut candidates: VecDeque<EstimateCandidate>,
+    workers: usize,
     ratio_limit: f32,
     control: &ControlToken<(PathBuf, FolderSummary)>,
     ds: &mut FolderInfo,
@@ -305,7 +306,7 @@ fn estimate_candidates(
         return true;
     }
 
-    let workers = analysis_worker_count(path).min(candidates.len()).max(1);
+    let workers = workers.min(candidates.len()).max(1);
     let (job_tx, job_rx) = unbounded::<EstimateCandidate>();
     let (result_tx, result_rx) = unbounded::<(FileInfo, io::Result<f32>)>();
     let mut handles = Vec::with_capacity(workers);
@@ -411,7 +412,13 @@ impl Background for FolderScan {
             ratio_limit,
         } = self;
         let mut ds = FolderInfo::new(&path);
-        let mut candidates = VecDeque::new();
+        let analysis_workers = analysis_worker_count(&path);
+        let mut candidates: VecDeque<EstimateCandidate> = VecDeque::new();
+        let inline_estimator = if analysis_workers == 1 {
+            Some(Compresstimator::with_block_size(8192))
+        } else {
+            None
+        };
         let incompressible = pathdb();
         let mut incompressible = incompressible.write().unwrap();
         let _ = incompressible.load();
@@ -477,6 +484,10 @@ impl Background for FolderScan {
                 || excludes.is_match(entry.path())
             {
                 ds.push(FileKind::Skipped, fi);
+            } else if let Some(estimator) = inline_estimator.as_ref() {
+                let result = std::fs::File::open(entry.path())
+                    .and_then(|handle| estimator.compresstimate(&handle, metadata.len()));
+                apply_estimate(&mut ds, fi, result, ratio_limit);
             } else {
                 candidates.push_back(EstimateCandidate {
                     file: fi,
@@ -487,14 +498,17 @@ impl Background for FolderScan {
 
         drop(incompressible);
 
-        if estimate_candidates(
-            &path,
-            candidates,
-            ratio_limit,
-            control,
-            &mut ds,
-            &mut last_status,
-        ) {
+        if analysis_workers == 1
+            || estimate_candidates(
+                &path,
+                candidates,
+                analysis_workers,
+                ratio_limit,
+                control,
+                &mut ds,
+                &mut last_status,
+            )
+        {
             Ok(ds)
         } else {
             Err(ds)
@@ -521,7 +535,7 @@ fn it_walks() {
 
     let task = BackgroundHandle::spawn(scanner);
 
-    let deadline = Instant::now() + Duration::from_millis(2000);
+    let deadline = Instant::now() + Duration::from_millis(2000));
 
     loop {
         let ret = task.wait_timeout(Duration::from_millis(100));
