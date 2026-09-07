@@ -1,6 +1,6 @@
+use crossbeam_channel::{Receiver, RecvTimeoutError};
 #[cfg(test)]
 use crossbeam_channel::TryRecvError;
-use crossbeam_channel::{Receiver, RecvTimeoutError};
 use std::panic::{catch_unwind, UnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

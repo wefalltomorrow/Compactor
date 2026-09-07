@@ -45,10 +45,14 @@ impl Default for Config {
             min_savings_percent: default_min_savings_percent(),
             max_threads: default_max_threads(),
             hdd_single_thread: default_hdd_single_thread(),
-            excludes: vec!["*:\\Windows*", "*:\\System Volume Information*", "*:\\$*"]
-                .into_iter()
-                .map(String::from)
-                .collect(),
+            excludes: vec![
+                "*:\\Windows*",
+                "*:\\System Volume Information*",
+                "*:\\$*",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
         }
     }
 }
@@ -112,12 +116,7 @@ impl Config {
     pub fn globset(&self) -> Result<GlobSet, String> {
         let mut globs = GlobSetBuilder::new();
 
-        for pattern in self
-            .excludes
-            .iter()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
+        for pattern in self.excludes.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
             let glob = GlobBuilder::new(pattern)
                 .case_insensitive(true)
                 .build()
