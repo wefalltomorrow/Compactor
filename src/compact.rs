@@ -3,6 +3,7 @@
 use std::convert::TryFrom;
 use std::ffi::{CString, OsStr};
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
 use std::str::FromStr;
@@ -14,7 +15,7 @@ use winapi::shared::ntdef::PVOID;
 use winapi::shared::winerror::{HRESULT_CODE, SUCCEEDED};
 use winapi::um::ioapiset::DeviceIoControl;
 use winapi::um::winioctl::{FSCTL_DELETE_EXTERNAL_BACKING, FSCTL_SET_EXTERNAL_BACKING};
-use winapi::um::winnt::{HANDLE, HRESULT, LPCWSTR};
+use winapi::um::winnt::{FILE_READ_DATA, FILE_WRITE_ATTRIBUTES, HANDLE, HRESULT, LPCWSTR};
 use winapi::um::winver::{GetFileVersionInfoA, GetFileVersionInfoSizeA, VerQueryValueA};
 use winapi::STRUCT;
 
@@ -65,8 +66,7 @@ const FILE_PROVIDER_COMPRESSION_LZX: ULONG = 1;
 const FILE_PROVIDER_COMPRESSION_XPRESS8K: ULONG = 2;
 const FILE_PROVIDER_COMPRESSION_XPRESS16K: ULONG = 3;
 
-const ERROR_SUCCESS: HRESULT = 0;
-const ERROR_COMPRESSION_NOT_BENEFICIAL: HRESULT = 344;
+const ERROR_COMPRESSION_NOT_BENEFICIAL: i32 = 344;
 
 const FILE_PROVIDER_CURRENT_VERSION: ULONG = 1;
 const WOF_CURRENT_VERSION: ULONG = 1;
@@ -269,8 +269,14 @@ unsafe fn as_byte_slice<T: Sized + Copy>(p: &T) -> &[u8] {
     std::slice::from_raw_parts((p as *const T) as *const u8, std::mem::size_of::<T>())
 }
 
+fn open_for_wof<P: AsRef<Path>>(path: P) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .access_mode(FILE_READ_DATA | FILE_WRITE_ATTRIBUTES)
+        .open(path)
+}
+
 pub fn compress_file<P: AsRef<Path>>(path: P, compression: Compression) -> std::io::Result<bool> {
-    let file = std::fs::File::open(path)?;
+    let file = open_for_wof(path)?;
     compress_file_handle(&file, compression)
 }
 
@@ -305,22 +311,21 @@ pub fn compress_file_handle(
         )
     };
 
-    // BOOL my arse
-    if SUCCEEDED(ret) {
+    if ret != 0 {
         Ok(true)
     } else {
-        let e = HRESULT_CODE(ret);
+        let err = std::io::Error::last_os_error();
 
-        if e == ERROR_COMPRESSION_NOT_BENEFICIAL {
+        if err.raw_os_error() == Some(ERROR_COMPRESSION_NOT_BENEFICIAL) {
             Ok(false)
         } else {
-            Err(std::io::Error::from_raw_os_error(e))
+            Err(err)
         }
     }
 }
 
 pub fn uncompress_file<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
-    let file = std::fs::File::open(path)?;
+    let file = open_for_wof(path)?;
     uncompress_file_handle(&file)
 }
 
@@ -340,10 +345,10 @@ pub fn uncompress_file_handle(file: &std::fs::File) -> std::io::Result<()> {
         )
     };
 
-    if SUCCEEDED(ret) {
+    if ret != 0 {
         Ok(())
     } else {
-        Err(std::io::Error::from_raw_os_error(HRESULT_CODE(ret)))
+        Err(std::io::Error::last_os_error())
     }
 }
 
