@@ -14,6 +14,7 @@
 
 - Default compression algorithm is now LZX.
 - Analysis and compression now use the same sampled compressibility threshold logic.
+- Parallelise sampled analysis on storage that Windows reports as having no seek penalty, capped at four workers; seek-penalty and unclassified storage remain single-threaded.
 - Removed blanket file-extension exclusions; files are judged by sampled contents instead of filename.
 - Default exclusions are limited to Windows, System Volume Information, and Windows-managed root `$*` paths.
 - Exclusion matching is case-insensitive and ignores blank or whitespace-only entries.
