@@ -11,6 +11,7 @@ This repository is a maintained fork of [Freaky/Compactor](https://github.com/Fr
 - XPRESS4K, XPRESS8K, XPRESS16K, and LZX compression
 - LZX as the default compression mode
 - Sampled compressibility analysis before compression
+- SSD-aware parallel analysis sampling with a single-threaded fallback for seek-penalty or unknown storage
 - Configurable minimum estimated savings threshold, defaulting to 1%
 - Estimated post-compression size and additional savings during analysis
 - Pause, resume, and stop controls
@@ -71,6 +72,7 @@ This fork includes the following changes:
 - Byte-aware compression progress
 - Configurable savings thresholds
 - Estimated post-compression size and savings in the GUI
+- SSD-aware parallel analysis sampling with an HDD-safe fallback
 - LZX as the default compression mode
 - Removal of default file-extension exclusions
 - Windows x64 CI on stable Rust
@@ -103,7 +105,7 @@ Compactor is primarily written in [Rust](https://www.rust-lang.org/) and uses a 
 
 WOF compression is applied through [`FSCTL_SET_EXTERNAL_BACKING`](https://learn.microsoft.com/windows-hardware/drivers/ifs/fsctl-set-external-backing) and removed through [`FSCTL_DELETE_EXTERNAL_BACKING`](https://learn.microsoft.com/windows-hardware/drivers/ifs/fsctl-delete-external-backing).
 
-Compressibility sampling uses Thomas Hurst's [compresstimator](https://github.com/Freaky/compresstimator) project. The estimate is a sampling result, not an exact prediction of the final WOF size.
+Compressibility sampling uses Thomas Hurst's [compresstimator](https://github.com/Freaky/compresstimator) project. The estimate is a sampling result, not an exact prediction of the final WOF size. Analysis uses up to four sampling workers when Windows reports that the target volume does not incur seek penalties; seek-penalty and unclassified storage remain single-threaded.
 
 ## Credits
 
