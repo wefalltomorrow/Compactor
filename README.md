@@ -11,9 +11,11 @@ This repository is a maintained fork of [Freaky/Compactor](https://github.com/Fr
 - XPRESS4K, XPRESS8K, XPRESS16K, and LZX compression
 - LZX as the default compression mode
 - Sampled compressibility analysis before compression
-- SSD-aware parallel analysis sampling with a single-threaded fallback for seek-penalty or unknown storage
 - Configurable minimum estimated savings threshold, defaulting to 1%
 - Estimated post-compression size and additional savings during analysis
+- Storage-aware multithreaded analysis and compression on SSDs
+- Single-threaded HDD operation by default
+- HDD analysis sampling designed to reduce seek overhead
 - Pause, resume, and stop controls
 - Timestamp preservation after compression and decompression
 - Automatic retry of previously incompressible files after they change
@@ -25,10 +27,14 @@ This repository is a maintained fork of [Freaky/Compactor](https://github.com/Fr
 
 - Compression: `LZX`
 - Minimum estimated savings: `1%`
+- Maximum threads: `Auto`
+- HDDs only use 1 thread: enabled
 - Excluded paths:
   - `*:\\Windows*`
   - `*:\\System Volume Information*`
   - `*:\\$*`
+
+`Auto` uses up to six worker threads on storage that Windows reports as having no seek penalty. HDDs use one thread by default, and unknown storage is handled conservatively with one thread. A manual limit from 1 to 16 can be set in Settings.
 
 File extensions are not used to decide whether a file should be compressed. Eligible files are sampled and compared against the configured savings threshold.
 
@@ -43,7 +49,7 @@ Compactor is portable and does not require an installer or background service.
 1. Choose a folder.
 2. Wait for analysis to complete.
 3. Review current disk usage and estimated savings.
-4. Change the compression mode or minimum savings threshold in Settings if required.
+4. Change the compression mode, savings threshold, or thread limit in Settings if required.
 5. Select Compress.
 
 Use Decompress to remove WOF backing from files previously compressed with Compactor.
@@ -72,9 +78,10 @@ This fork includes the following changes:
 - Byte-aware compression progress
 - Configurable savings thresholds
 - Estimated post-compression size and savings in the GUI
-- SSD-aware parallel analysis sampling with an HDD-safe fallback
 - LZX as the default compression mode
 - Removal of default file-extension exclusions
+- Storage-aware worker selection and parallel SSD processing
+- Reduced-seek HDD analysis sampling
 - Windows x64 CI on stable Rust
 
 See [CHANGELOG.md](CHANGELOG.md) for the full change history.
@@ -105,7 +112,9 @@ Compactor is primarily written in [Rust](https://www.rust-lang.org/) and uses a 
 
 WOF compression is applied through [`FSCTL_SET_EXTERNAL_BACKING`](https://learn.microsoft.com/windows-hardware/drivers/ifs/fsctl-set-external-backing) and removed through [`FSCTL_DELETE_EXTERNAL_BACKING`](https://learn.microsoft.com/windows-hardware/drivers/ifs/fsctl-delete-external-backing).
 
-Compressibility sampling uses Thomas Hurst's [compresstimator](https://github.com/Freaky/compresstimator) project. The estimate is a sampling result, not an exact prediction of the final WOF size. Analysis uses up to four sampling workers when Windows reports that the target volume does not incur seek penalties; seek-penalty and unclassified storage remain single-threaded.
+Compressibility sampling uses Thomas Hurst's [compresstimator](https://github.com/Freaky/compresstimator) project. SSD analysis uses distributed sampling, while HDD analysis uses a small number of contiguous sample windows to reduce seek overhead. Estimates are sampling results and are not exact predictions of final WOF size.
+
+Windows storage-property queries are used to distinguish storage with and without seek penalties. If storage type cannot be determined, Compactor uses one worker thread.
 
 ## Credits
 

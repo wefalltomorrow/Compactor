@@ -8,13 +8,18 @@
 
 - Configurable minimum estimated savings threshold in Settings; default is 1%.
 - Estimated post-compaction size and additional savings during analysis.
+- Configurable maximum worker-thread limit with `Auto` as the default.
+- HDD single-thread safeguard, enabled by default.
 - Windows x64 MSVC build and test workflow on stable Rust.
 
 ### Changed
 
 - Default compression algorithm is now LZX.
 - Analysis and compression now use the same sampled compressibility threshold logic.
-- Parallelise sampled analysis on storage that Windows reports as having no seek penalty, capped at four workers; seek-penalty and unclassified storage remain single-threaded.
+- SSD analysis and compression can run concurrently using the configured worker limit.
+- `Auto` uses up to six workers on storage reported by Windows as having no seek penalty.
+- HDD analysis uses a small number of contiguous sample windows to reduce seek overhead.
+- HDDs use one worker by default; unknown storage also uses one worker.
 - Removed blanket file-extension exclusions; files are judged by sampled contents instead of filename.
 - Default exclusions are limited to Windows, System Volume Information, and Windows-managed root `$*` paths.
 - Exclusion matching is case-insensitive and ignores blank or whitespace-only entries.
@@ -80,7 +85,7 @@
 
 ### Fixed
 
-- Tests ([#11], @Dr-Emann)
+- Tests ([#11])
 
 ### Removed
 

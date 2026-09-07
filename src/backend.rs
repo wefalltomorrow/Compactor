@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -7,7 +8,7 @@ use filesize::PathExt;
 
 use crate::background::BackgroundHandle;
 use crate::compression::BackgroundCompactor;
-use crate::folder::{FileKind, FolderInfo, FolderScan};
+use crate::folder::{worker_count_for_path, FileInfo, FileKind, FolderInfo, FolderScan};
 use crate::gui::{GuiRequest, GuiWrapper};
 use crate::persistence::{config, incompressible_key, pathdb};
 
@@ -83,7 +84,13 @@ impl<T> Backend<T> {
         let excludes = current.globset().expect("globs");
         let ratio_limit = current.ratio_limit();
 
-        let scanner = FolderScan::new(path, excludes, ratio_limit);
+        let scanner = FolderScan::new(
+            path,
+            excludes,
+            ratio_limit,
+            current.max_threads,
+            current.hdd_single_thread,
+        );
         let task = BackgroundHandle::spawn(scanner);
         let start = Instant::now();
 
@@ -141,29 +148,43 @@ impl<T> Backend<T> {
         }
     }
 
-    // Ph'nglui mglw'nafh Cthulhu R'lyeh wgah'nagl fhtagn.
     fn compress_loop(&mut self) {
-        let (send_file, send_file_rx) = bounded::<(PathBuf, u64)>(1);
-        let (recv_result_tx, recv_result) = bounded::<(PathBuf, io::Result<bool>)>(1);
-
         let current = config().read().unwrap().current();
         let compression = Some(current.compression);
-        let compactor = BackgroundCompactor::new(
-            compression,
-            current.ratio_limit(),
-            send_file_rx,
-            recv_result_tx,
-        );
-        let task = BackgroundHandle::spawn(compactor);
-        let start = Instant::now();
-
         let mut folder = self.info.take().expect("fileinfo");
+        let worker_count = worker_count_for_path(
+            &folder.path,
+            current.max_threads,
+            current.hdd_single_thread,
+        );
+
+        let (send_file, send_file_rx) = bounded::<(PathBuf, u64)>(worker_count);
+        let (recv_result_tx, recv_result) =
+            bounded::<(PathBuf, io::Result<bool>)>(worker_count);
+        let mut tasks = Vec::with_capacity(worker_count);
+
+        for _ in 0..worker_count {
+            let compactor = BackgroundCompactor::new(
+                compression,
+                current.ratio_limit(),
+                send_file_rx.clone(),
+                recv_result_tx.clone(),
+            );
+            tasks.push(BackgroundHandle::spawn(compactor));
+        }
+
+        drop(send_file_rx);
+        drop(recv_result_tx);
+
+        let start = Instant::now();
         let summary = folder.summary();
         let total_files = folder.len(FileKind::Compressible);
         let total_bytes = summary.compressible.logical_size;
         let compressible_size = summary.compressible.physical_size;
         let mut done_files = 0usize;
         let mut done_bytes = 0u64;
+        let mut pending: HashMap<PathBuf, FileInfo> = HashMap::with_capacity(worker_count);
+        let mut no_more_files = false;
 
         let mut last_update = Instant::now();
         let mut last_write = Instant::now();
@@ -177,40 +198,27 @@ impl<T> Backend<T> {
         let _ = incompressible.load();
 
         self.gui.compacting();
-        self.gui.status("Compacting".to_string(), Some(0.0));
+        self.gui.status("Compacting", Some(0.0));
 
         loop {
-            while paused && !stopped {
-                self.gui.status(
-                    "Paused".to_string(),
-                    Some(progress(done_bytes, total_bytes)),
-                );
-                self.gui.summary(folder.summary());
+            while !paused && !stopped && pending.len() < worker_count && !no_more_files {
+                if let Some(fi) = folder.pop(FileKind::Compressible) {
+                    let path = folder.path.join(&fi.path);
+                    let logical_size = fi.logical_size;
 
-                match self.msg.recv() {
-                    Ok(GuiRequest::Pause) => paused = true,
-                    Ok(GuiRequest::Resume) => {
-                        self.gui.status(
-                            "Compacting".to_string(),
-                            Some(progress(done_bytes, total_bytes)),
-                        );
-                        self.gui.resumed();
-                        paused = false;
-                        last_update = Instant::now();
-                    }
-                    Ok(GuiRequest::Stop) => {
+                    if send_file.send((path.clone(), logical_size)).is_err() {
+                        folder.push(FileKind::Compressible, fi);
                         stopped = true;
                         break;
                     }
-                    Ok(_) => (),
-                    Err(_) => {
-                        stopped = true;
-                        break;
-                    }
+
+                    pending.insert(path, fi);
+                } else {
+                    no_more_files = true;
                 }
             }
 
-            if stopped {
+            if (no_more_files || stopped) && pending.is_empty() {
                 break;
             }
 
@@ -219,109 +227,133 @@ impl<T> Backend<T> {
                 last_write = Instant::now();
             }
 
-            let mut displayed = false;
-
-            if let Some(mut fi) = folder.pop(FileKind::Compressible) {
-                let logical_size = fi.logical_size;
-                send_file
-                    .send((folder.path.join(&fi.path), logical_size))
-                    .expect("send_file");
-
-                if last_update.elapsed() > Duration::from_millis(50) {
-                    self.gui.status(
-                        format!("Compacting: {}", fi.path.display()),
-                        Some(progress(done_bytes, total_bytes)),
-                    );
-                    last_update = Instant::now();
-                    displayed = true;
+            loop {
+                match self.msg.try_recv() {
+                    Ok(GuiRequest::Pause) if !paused && !stopped => {
+                        paused = true;
+                        self.gui.paused();
+                        self.gui.status(
+                            if pending.is_empty() {
+                                "Paused"
+                            } else {
+                                "Pausing after active files finish"
+                            },
+                            Some(progress(done_bytes, total_bytes)),
+                        );
+                    }
+                    Ok(GuiRequest::Resume) if paused && !stopped => {
+                        paused = false;
+                        self.gui.resumed();
+                        self.gui.status(
+                            "Compacting",
+                            Some(progress(done_bytes, total_bytes)),
+                        );
+                    }
+                    Ok(GuiRequest::Stop) if !stopped => {
+                        stopped = true;
+                        self.gui.status(
+                            if pending.is_empty() {
+                                "Stopping"
+                            } else {
+                                "Stopping after active files finish"
+                            },
+                            Some(progress(done_bytes, total_bytes)),
+                        );
+                    }
+                    Ok(_) => (),
+                    Err(_) => break,
                 }
+            }
 
-                loop {
-                    if let Ok((path, result)) = recv_result.recv_timeout(Duration::from_millis(25)) {
-                        done_files += 1;
-                        done_bytes = done_bytes.saturating_add(logical_size);
+            match recv_result.recv_timeout(Duration::from_millis(25)) {
+                Ok((path, result)) => {
+                    let Some(mut fi) = pending.remove(&path) else {
+                        continue;
+                    };
+                    let logical_size = fi.logical_size;
+                    let display_path = fi.path.clone();
+                    done_files += 1;
+                    done_bytes = done_bytes.saturating_add(logical_size);
 
-                        match result {
-                            Ok(true) => {
-                                fi.physical_size = path.size_on_disk().unwrap_or(fi.physical_size);
-                                fi.estimated_physical_size = fi.physical_size;
+                    match result {
+                        Ok(true) => {
+                            fi.physical_size = path.size_on_disk().unwrap_or(fi.physical_size);
+                            fi.estimated_physical_size = fi.physical_size;
 
-                                // Windows can occasionally report success without reducing allocation.
-                                if fi.physical_size >= fi.logical_size {
-                                    if let Ok(metadata) = std::fs::metadata(&path) {
-                                        incompressible.insert(incompressible_key(&path, &metadata));
-                                    }
-                                    folder.push(FileKind::Skipped, fi);
-                                } else {
-                                    folder.push(FileKind::Compressed, fi);
-                                }
-                            }
-                            Ok(false) => {
-                                fi.estimated_physical_size = fi.physical_size;
+                            if fi.physical_size >= fi.logical_size {
                                 if let Ok(metadata) = std::fs::metadata(&path) {
                                     incompressible.insert(incompressible_key(&path, &metadata));
                                 }
                                 folder.push(FileKind::Skipped, fi);
-                            }
-                            Err(err) => {
-                                fi.estimated_physical_size = fi.physical_size;
-                                self.gui.status(
-                                    format!("Error: {}, {}", err, fi.path.display()),
-                                    Some(progress(done_bytes, total_bytes)),
-                                );
-                                folder.push(FileKind::Skipped, fi);
+                            } else {
+                                folder.push(FileKind::Compressed, fi);
                             }
                         }
-
-                        if last_update.elapsed() > Duration::from_millis(50) {
-                            last_update = Instant::now();
-                            self.gui.summary(folder.summary());
+                        Ok(false) => {
+                            fi.estimated_physical_size = fi.physical_size;
+                            if let Ok(metadata) = std::fs::metadata(&path) {
+                                incompressible.insert(incompressible_key(&path, &metadata));
+                            }
+                            folder.push(FileKind::Skipped, fi);
                         }
-
-                        break;
+                        Err(err) => {
+                            fi.estimated_physical_size = fi.physical_size;
+                            self.gui.status(
+                                format!("Error: {}, {}", err, display_path.display()),
+                                Some(progress(done_bytes, total_bytes)),
+                            );
+                            folder.push(FileKind::Skipped, fi);
+                        }
                     }
 
-                    if !displayed && last_update.elapsed() > Duration::from_millis(50) {
+                    if last_update.elapsed() > Duration::from_millis(50) {
+                        last_update = Instant::now();
                         self.gui.status(
-                            format!("Compacting: {}", fi.path.display()),
+                            if paused {
+                                if pending.is_empty() {
+                                    "Paused".to_string()
+                                } else {
+                                    "Pausing after active files finish".to_string()
+                                }
+                            } else if stopped {
+                                if pending.is_empty() {
+                                    "Stopping".to_string()
+                                } else {
+                                    "Stopping after active files finish".to_string()
+                                }
+                            } else {
+                                format!("Compacting: {}", display_path.display())
+                            },
                             Some(progress(done_bytes, total_bytes)),
                         );
-                        last_update = Instant::now();
-                        displayed = true;
-                    }
 
-                    match self.msg.try_recv() {
-                        Ok(GuiRequest::Pause) if !paused => {
-                            self.gui.status(
-                                format!("Pausing after {}", fi.path.display()),
-                                Some(progress(done_bytes, total_bytes)),
-                            );
-                            self.gui.paused();
-                            paused = true;
+                        if pending.is_empty() {
+                            self.gui.summary(folder.summary());
                         }
-                        Ok(GuiRequest::Resume) => {
-                            self.gui.resumed();
-                            paused = false;
-                            stopped = false;
-                        }
-                        Ok(GuiRequest::Stop) if !stopped => {
-                            self.gui.status(
-                                format!("Stopping after {}", fi.path.display()),
-                                Some(progress(done_bytes, total_bytes)),
-                            );
-                            stopped = true;
-                        }
-                        Ok(_) => (),
-                        Err(_) => (),
                     }
                 }
-            } else {
-                break;
+                Err(RecvTimeoutError::Timeout) => {
+                    if paused && pending.is_empty() && last_update.elapsed() > Duration::from_millis(50)
+                    {
+                        last_update = Instant::now();
+                        self.gui.status(
+                            "Paused",
+                            Some(progress(done_bytes, total_bytes)),
+                        );
+                        self.gui.summary(folder.summary());
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    stopped = true;
+                    break;
+                }
             }
         }
 
         drop(send_file);
-        task.wait();
+        for task in tasks {
+            task.wait();
+        }
         let _ = incompressible.save();
 
         let new_size = folder.physical_size;
@@ -358,7 +390,6 @@ impl<T> Backend<T> {
         self.info = Some(folder);
     }
 
-    // Oh no, not again.
     fn uncompress_loop(&mut self) {
         let (send_file, send_file_rx) = bounded::<(PathBuf, u64)>(1);
         let (recv_result_tx, recv_result) = bounded::<(PathBuf, io::Result<bool>)>(1);

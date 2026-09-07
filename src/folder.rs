@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::io;
+use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::os::windows::io::AsRawHandle;
 use std::path::{Component, Path, PathBuf, Prefix};
@@ -28,6 +28,12 @@ use winapi::um::winnt::{
 
 use crate::background::{Background, ControlToken};
 use crate::persistence::{incompressible_key, pathdb};
+
+const AUTO_MAX_THREADS: usize = 6;
+const MAX_CONFIGURED_THREADS: usize = 16;
+const HDD_SAMPLE_WINDOWS: u64 = 4;
+const HDD_SAMPLE_CHUNK: usize = 128 * 1024;
+const ESTIMATOR_BLOCK_SIZE: usize = 8192;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FileInfo {
@@ -177,14 +183,24 @@ pub struct FolderScan {
     path: PathBuf,
     excludes: GlobSet,
     ratio_limit: f32,
+    max_threads: usize,
+    hdd_single_thread: bool,
 }
 
 impl FolderScan {
-    pub fn new<P: AsRef<Path>>(path: P, excludes: GlobSet, ratio_limit: f32) -> Self {
+    pub fn new<P: AsRef<Path>>(
+        path: P,
+        excludes: GlobSet,
+        ratio_limit: f32,
+        max_threads: usize,
+        hdd_single_thread: bool,
+    ) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
             excludes,
             ratio_limit,
+            max_threads,
+            hdd_single_thread,
         }
     }
 }
@@ -262,19 +278,95 @@ fn volume_incurs_seek_penalty(path: &Path) -> Option<bool> {
     }
 }
 
-fn worker_count_for_storage(cpus: usize, incurs_seek_penalty: Option<bool>) -> usize {
-    if matches!(incurs_seek_penalty, Some(false)) {
-        cpus.max(1).min(4)
+fn configured_thread_count(cpus: usize, max_threads: usize) -> usize {
+    if max_threads == 0 {
+        cpus.max(1).min(AUTO_MAX_THREADS)
     } else {
-        1
+        max_threads.clamp(1, MAX_CONFIGURED_THREADS)
     }
 }
 
-fn analysis_worker_count(path: &Path) -> usize {
+fn worker_count_for_storage(
+    cpus: usize,
+    incurs_seek_penalty: Option<bool>,
+    max_threads: usize,
+    hdd_single_thread: bool,
+) -> usize {
+    let configured = configured_thread_count(cpus, max_threads);
+
+    match incurs_seek_penalty {
+        Some(true) if hdd_single_thread => 1,
+        Some(_) => configured,
+        None => 1,
+    }
+}
+
+pub fn worker_count_for_path(path: &Path, max_threads: usize, hdd_single_thread: bool) -> usize {
     let cpus = thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1);
-    worker_count_for_storage(cpus, volume_incurs_seek_penalty(path))
+    worker_count_for_storage(
+        cpus,
+        volume_incurs_seek_penalty(path),
+        max_threads,
+        hdd_single_thread,
+    )
+}
+
+fn compresstimate_hdd(
+    estimator: &Compresstimator,
+    handle: &mut std::fs::File,
+    len: u64,
+    buffer: &mut Vec<u8>,
+) -> io::Result<f32> {
+    let chunk = HDD_SAMPLE_CHUNK.min(len as usize);
+
+    if chunk == 0 {
+        return Ok(1.0);
+    }
+
+    if len <= (HDD_SAMPLE_CHUNK as u64) * HDD_SAMPLE_WINDOWS {
+        return estimator.compresstimate(handle, len);
+    }
+
+    buffer.resize(chunk, 0);
+    let max_start = len.saturating_sub(chunk as u64);
+    let mut weighted_ratio = 0.0f64;
+    let mut total_sampled = 0u64;
+
+    for sample in 0..HDD_SAMPLE_WINDOWS {
+        let mut offset = max_start.saturating_mul(sample) / (HDD_SAMPLE_WINDOWS - 1);
+        offset = (offset / ESTIMATOR_BLOCK_SIZE as u64) * ESTIMATOR_BLOCK_SIZE as u64;
+
+        handle.seek(SeekFrom::Start(offset))?;
+        handle.read_exact(&mut buffer[..chunk])?;
+
+        let ratio = estimator.compresstimate(Cursor::new(&buffer[..chunk]), chunk as u64)?;
+        weighted_ratio += ratio as f64 * chunk as f64;
+        total_sampled = total_sampled.saturating_add(chunk as u64);
+    }
+
+    if total_sampled == 0 {
+        Ok(1.0)
+    } else {
+        Ok((weighted_ratio / total_sampled as f64) as f32)
+    }
+}
+
+fn estimate_file(
+    estimator: &Compresstimator,
+    path: &Path,
+    len: u64,
+    hdd: bool,
+    buffer: &mut Vec<u8>,
+) -> io::Result<f32> {
+    let mut handle = std::fs::File::open(path)?;
+
+    if hdd {
+        compresstimate_hdd(estimator, &mut handle, len, buffer)
+    } else {
+        estimator.compresstimate(&mut handle, len)
+    }
 }
 
 fn apply_estimate(
@@ -297,6 +389,7 @@ fn estimate_candidates(
     path: &Path,
     mut candidates: VecDeque<EstimateCandidate>,
     workers: usize,
+    hdd: bool,
     ratio_limit: f32,
     control: &ControlToken<(PathBuf, FolderSummary)>,
     ds: &mut FolderInfo,
@@ -317,12 +410,18 @@ fn estimate_candidates(
         let root = path.to_path_buf();
 
         handles.push(thread::spawn(move || {
-            let estimator = Compresstimator::with_block_size(8192);
+            let estimator = Compresstimator::with_block_size(ESTIMATOR_BLOCK_SIZE);
+            let mut buffer = Vec::new();
 
             while let Ok(candidate) = jobs.recv() {
                 let file_path = root.join(&candidate.file.path);
-                let result = std::fs::File::open(file_path)
-                    .and_then(|handle| estimator.compresstimate(&handle, candidate.content_len));
+                let result = estimate_file(
+                    &estimator,
+                    &file_path,
+                    candidate.content_len,
+                    hdd,
+                    &mut buffer,
+                );
 
                 if results.send((candidate.file, result)).is_err() {
                     break;
@@ -410,15 +509,28 @@ impl Background for FolderScan {
             path,
             excludes,
             ratio_limit,
+            max_threads,
+            hdd_single_thread,
         } = self;
         let mut ds = FolderInfo::new(&path);
-        let analysis_workers = analysis_worker_count(&path);
+        let cpus = thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(1);
+        let seek_penalty = volume_incurs_seek_penalty(&path);
+        let analysis_workers = worker_count_for_storage(
+            cpus,
+            seek_penalty,
+            max_threads,
+            hdd_single_thread,
+        );
+        let is_hdd = matches!(seek_penalty, Some(true));
         let mut candidates: VecDeque<EstimateCandidate> = VecDeque::new();
         let inline_estimator = if analysis_workers == 1 {
-            Some(Compresstimator::with_block_size(8192))
+            Some(Compresstimator::with_block_size(ESTIMATOR_BLOCK_SIZE))
         } else {
             None
         };
+        let mut inline_buffer = Vec::new();
         let incompressible = pathdb();
         let mut incompressible = incompressible.write().unwrap();
         let _ = incompressible.load();
@@ -470,8 +582,6 @@ impl Background for FolderScan {
                 | FILE_ATTRIBUTE_REPARSE_POINT
                 | FILE_ATTRIBUTE_OFFLINE;
 
-            // These file types can report a smaller physical size without being WOF
-            // compressed, so classify them before the physical-size heuristic.
             if attributes & special_attributes != 0 {
                 ds.push(FileKind::Skipped, fi);
             } else if fi.physical_size < fi.logical_size {
@@ -485,8 +595,13 @@ impl Background for FolderScan {
             {
                 ds.push(FileKind::Skipped, fi);
             } else if let Some(estimator) = inline_estimator.as_ref() {
-                let result = std::fs::File::open(entry.path())
-                    .and_then(|handle| estimator.compresstimate(&handle, metadata.len()));
+                let result = estimate_file(
+                    estimator,
+                    entry.path(),
+                    metadata.len(),
+                    is_hdd,
+                    &mut inline_buffer,
+                );
                 apply_estimate(&mut ds, fi, result, ratio_limit);
             } else {
                 candidates.push_back(EstimateCandidate {
@@ -503,6 +618,7 @@ impl Background for FolderScan {
                 &path,
                 candidates,
                 analysis_workers,
+                is_hdd,
                 ratio_limit,
                 control,
                 &mut ds,
@@ -518,10 +634,13 @@ impl Background for FolderScan {
 
 #[test]
 fn analysis_workers_are_storage_aware() {
-    assert_eq!(1, worker_count_for_storage(16, Some(true)));
-    assert_eq!(1, worker_count_for_storage(16, None));
-    assert_eq!(1, worker_count_for_storage(1, Some(false)));
-    assert_eq!(4, worker_count_for_storage(16, Some(false)));
+    assert_eq!(1, worker_count_for_storage(16, Some(true), 0, true));
+    assert_eq!(1, worker_count_for_storage(16, None, 0, true));
+    assert_eq!(1, worker_count_for_storage(1, Some(false), 0, true));
+    assert_eq!(6, worker_count_for_storage(16, Some(false), 0, true));
+    assert_eq!(4, worker_count_for_storage(16, Some(false), 4, true));
+    assert_eq!(6, worker_count_for_storage(16, Some(true), 0, false));
+    assert_eq!(16, worker_count_for_storage(4, Some(false), 16, true));
 }
 
 #[test]
@@ -531,11 +650,17 @@ fn it_walks() {
 
     let config = Config::default();
     let gs = config.globset().unwrap();
-    let scanner = FolderScan::new("C:\\Games", gs, config.ratio_limit());
+    let scanner = FolderScan::new(
+        "C:\\Games",
+        gs,
+        config.ratio_limit(),
+        config.max_threads,
+        config.hdd_single_thread,
+    );
 
     let task = BackgroundHandle::spawn(scanner);
 
-    let deadline = Instant::now() + Duration::from_millis(2000);
+    let deadline = Instant::now() + Duration::from_millis(2000));
 
     loop {
         let ret = task.wait_timeout(Duration::from_millis(100));

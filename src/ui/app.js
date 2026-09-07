@@ -140,7 +140,6 @@ var Util = (function() {
 
 Util.bytes_to_human = Util.bytes_to_human_bin;
 
-// Actions call back into Rust
 var Action = (function() {
 	"use strict";
 
@@ -192,7 +191,6 @@ var Action = (function() {
 	};
 })();
 
-// Responses come from Rust
 var Response = (function() {
 	"use strict";
 
@@ -203,6 +201,8 @@ var Response = (function() {
 					Gui.set_decimal(msg.decimal);
 					Gui.set_compression(msg.compression);
 					Gui.set_min_savings(msg.min_savings_percent);
+					Gui.set_max_threads(msg.max_threads);
+					Gui.set_hdd_single_thread(msg.hdd_single_thread);
 					Gui.set_excludes(msg.excludes);
 					break;
 
@@ -234,7 +234,6 @@ var Response = (function() {
 	};
 })();
 
-// GUI state and updates
 var Gui = (function() {
 	"use strict";
 
@@ -249,11 +248,15 @@ var Gui = (function() {
 			$("#Button_Save").on("click", function() {
 				var minSavings = parseFloat($("#Min_Savings").val());
 				if (isNaN(minSavings)) minSavings = 1;
+				var maxThreads = parseInt($("#Max_Threads").val(), 10);
+				if (isNaN(maxThreads)) maxThreads = 0;
 
 				Action.save_config({
 					decimal: $("#SI_Units").val() == "D",
 					compression: $("#Compression_Mode").val(),
 					min_savings_percent: minSavings,
+					max_threads: maxThreads,
+					hdd_single_thread: $("#HDD_Single_Thread").prop("checked"),
 					excludes: $("#Excludes").val()
 				});
 			});
@@ -292,6 +295,14 @@ var Gui = (function() {
 
 		set_min_savings: function(percent) {
 			$("#Min_Savings").val(percent);
+		},
+
+		set_max_threads: function(threads) {
+			$("#Max_Threads").val(threads);
+		},
+
+		set_hdd_single_thread: function(enabled) {
+			$("#HDD_Single_Thread").prop("checked", enabled);
 		},
 
 		set_excludes: function(excludes) {
