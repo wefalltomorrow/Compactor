@@ -29,7 +29,8 @@ use winapi::um::winnt::{
 use crate::background::{Background, ControlToken};
 use crate::persistence::{incompressible_key, pathdb};
 
-const AUTO_MAX_THREADS: usize = 6;
+const AUTO_MAX_ANALYSIS_THREADS: usize = 8;
+const AUTO_MAX_COMPRESSION_THREADS: usize = 16;
 const MAX_CONFIGURED_THREADS: usize = 16;
 const HDD_SAMPLE_WINDOWS: u64 = 4;
 const HDD_SAMPLE_CHUNK: usize = 128 * 1024;
@@ -38,6 +39,10 @@ const ESTIMATOR_BLOCK_SIZE: usize = 8192;
 #[derive(Debug, Clone, Serialize)]
 pub struct FileInfo {
     pub path: PathBuf,
+    pub content_len: u64,
+    pub modified_time: u64,
+    pub estimate_valid: bool,
+    pub estimated_ratio: f32,
     pub logical_size: u64,
     pub physical_size: u64,
     pub estimated_physical_size: u64,
@@ -278,9 +283,9 @@ fn volume_incurs_seek_penalty(path: &Path) -> Option<bool> {
     }
 }
 
-fn configured_thread_count(cpus: usize, max_threads: usize) -> usize {
+fn configured_thread_count(cpus: usize, max_threads: usize, auto_max_threads: usize) -> usize {
     if max_threads == 0 {
-        cpus.max(1).min(AUTO_MAX_THREADS)
+        cpus.max(1).min(auto_max_threads)
     } else {
         max_threads.clamp(1, MAX_CONFIGURED_THREADS)
     }
@@ -291,8 +296,9 @@ fn worker_count_for_storage(
     incurs_seek_penalty: Option<bool>,
     max_threads: usize,
     hdd_single_thread: bool,
+    auto_max_threads: usize,
 ) -> usize {
-    let configured = configured_thread_count(cpus, max_threads);
+    let configured = configured_thread_count(cpus, max_threads, auto_max_threads);
 
     match incurs_seek_penalty {
         Some(true) if hdd_single_thread => 1,
@@ -301,7 +307,11 @@ fn worker_count_for_storage(
     }
 }
 
-pub fn worker_count_for_path(path: &Path, max_threads: usize, hdd_single_thread: bool) -> usize {
+pub fn compression_worker_count_for_path(
+    path: &Path,
+    max_threads: usize,
+    hdd_single_thread: bool,
+) -> usize {
     let cpus = thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1);
@@ -310,6 +320,7 @@ pub fn worker_count_for_path(path: &Path, max_threads: usize, hdd_single_thread:
         volume_incurs_seek_penalty(path),
         max_threads,
         hdd_single_thread,
+        AUTO_MAX_COMPRESSION_THREADS,
     )
 }
 
@@ -379,6 +390,8 @@ fn apply_estimate(
         Ok(ratio) if ratio < ratio_limit => {
             fi.estimated_physical_size =
                 estimate_physical_size(fi.logical_size, ratio).min(fi.physical_size);
+            fi.estimate_valid = true;
+            fi.estimated_ratio = ratio;
             ds.push(FileKind::Compressible, fi);
         }
         Ok(_) | Err(_) => ds.push(FileKind::Skipped, fi),
@@ -522,6 +535,7 @@ impl Background for FolderScan {
             seek_penalty,
             max_threads,
             hdd_single_thread,
+            AUTO_MAX_ANALYSIS_THREADS,
         );
         let is_hdd = matches!(seek_penalty, Some(true));
         let mut candidates: VecDeque<EstimateCandidate> = VecDeque::new();
@@ -556,6 +570,10 @@ impl Background for FolderScan {
             let logical_size = metadata.len().max(physical);
             let fi = FileInfo {
                 path: shortname,
+                content_len: metadata.len(),
+                modified_time: metadata.last_write_time(),
+                estimate_valid: false,
+                estimated_ratio: 1.0,
                 logical_size,
                 physical_size: physical,
                 estimated_physical_size: physical,
@@ -634,13 +652,38 @@ impl Background for FolderScan {
 
 #[test]
 fn analysis_workers_are_storage_aware() {
-    assert_eq!(1, worker_count_for_storage(16, Some(true), 0, true));
-    assert_eq!(1, worker_count_for_storage(16, None, 0, true));
-    assert_eq!(1, worker_count_for_storage(1, Some(false), 0, true));
-    assert_eq!(6, worker_count_for_storage(16, Some(false), 0, true));
-    assert_eq!(4, worker_count_for_storage(16, Some(false), 4, true));
-    assert_eq!(6, worker_count_for_storage(16, Some(true), 0, false));
-    assert_eq!(16, worker_count_for_storage(4, Some(false), 16, true));
+    assert_eq!(
+        1,
+        worker_count_for_storage(16, Some(true), 0, true, AUTO_MAX_ANALYSIS_THREADS)
+    );
+    assert_eq!(
+        1,
+        worker_count_for_storage(16, None, 0, true, AUTO_MAX_ANALYSIS_THREADS)
+    );
+    assert_eq!(
+        1,
+        worker_count_for_storage(1, Some(false), 0, true, AUTO_MAX_ANALYSIS_THREADS)
+    );
+    assert_eq!(
+        8,
+        worker_count_for_storage(16, Some(false), 0, true, AUTO_MAX_ANALYSIS_THREADS)
+    );
+    assert_eq!(
+        4,
+        worker_count_for_storage(16, Some(false), 4, true, AUTO_MAX_ANALYSIS_THREADS)
+    );
+    assert_eq!(
+        8,
+        worker_count_for_storage(16, Some(true), 0, false, AUTO_MAX_ANALYSIS_THREADS)
+    );
+    assert_eq!(
+        16,
+        worker_count_for_storage(32, Some(false), 0, true, AUTO_MAX_COMPRESSION_THREADS)
+    );
+    assert_eq!(
+        16,
+        worker_count_for_storage(4, Some(false), 16, true, AUTO_MAX_ANALYSIS_THREADS)
+    );
 }
 
 #[test]
