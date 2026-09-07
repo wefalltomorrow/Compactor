@@ -1,0 +1,57 @@
+name: Apply in-app compressed viewer
+
+on:
+  push:
+    branches: [ "in-app-compressed-viewer" ]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  patch:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Apply viewer changes
+        run: python .github/scripts/apply-in-app-compressed-viewer.py
+
+      - name: Format Rust
+        run: cargo fmt --all
+
+      - name: Build release x64
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Run tests
+        run: cargo test --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Remove temporary patch files
+        shell: pwsh
+        run: |
+          Remove-Item .github/scripts/apply-in-app-compressed-viewer.py -Force
+          Remove-Item .github/workflows/apply-in-app-compressed-viewer.yml -Force
+
+      - name: Commit viewer changes
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            throw 'No viewer changes were produced.'
+          }
+          git commit -m "Add in-app compressed-file viewer"
+          git push origin HEAD:in-app-compressed-viewer
