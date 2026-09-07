@@ -212,3 +212,107 @@ li {
   font-size: 0.75em;
   vertical-align: middle;
 }
+
+#CompressedFiles {
+  margin: 12px 16px;
+}
+
+#Compressed_View_Header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+#Compressed_View_Header button {
+  background-color: rgb(118, 118, 118);
+  margin-left: 0;
+  margin-right: 8px;
+}
+
+#Compressed_View_Root {
+  color: #bbb;
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#Compressed_View_Summary {
+  margin: 4px 0 8px 0;
+  font-size: 0.9em;
+}
+
+#Compressed_View_Controls {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+#Compressed_View_Controls button {
+  background-color: rgb(118, 118, 118);
+}
+
+#Compressed_View_Controls button.active {
+  background-color: #229af7;
+}
+
+#Compressed_View_Search {
+  flex: 1;
+  min-width: 120px;
+  margin-left: 8px;
+  font-size: 1em;
+}
+
+#Compressed_View_Table_Wrap {
+  max-height: 230px;
+  overflow: auto;
+  border: 1px solid #777;
+  background-color: #333;
+}
+
+#Compressed_View_Table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82em;
+}
+
+#Compressed_View_Table th,
+#Compressed_View_Table td {
+  border-bottom: 1px solid #555;
+  padding: 4px 6px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+#Compressed_View_Table th {
+  background-color: #2c2c2c;
+  color: #ddd;
+}
+
+#Compressed_View_Table th.path,
+#Compressed_View_Table td.path {
+  text-align: left;
+}
+
+#Compressed_View_Table td.empty {
+  padding: 16px;
+  text-align: center;
+  color: #aaa;
+}
+
+#Compressed_View_Pagination {
+  align-items: center;
+  margin-top: 6px;
+}
+
+#Compressed_View_Page {
+  min-width: 220px;
+  text-align: center;
+  font-size: 0.85em;
+}
+
+#Compressed_View_Pagination button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+

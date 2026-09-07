@@ -1,6 +1,4 @@
 use std::collections::{BTreeMap, HashMap};
-use std::fmt::Write;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -11,7 +9,7 @@ use filesize::PathExt;
 use crate::background::BackgroundHandle;
 use crate::compression::BackgroundCompactor;
 use crate::folder::{worker_count_for_path, FileInfo, FileKind, FolderInfo, FolderScan};
-use crate::gui::{GuiRequest, GuiWrapper};
+use crate::gui::{CompressedViewItem, GuiRequest, GuiResponse, GuiWrapper};
 use crate::persistence::{config, incompressible_key, pathdb};
 
 pub struct Backend<T> {
@@ -39,6 +37,7 @@ fn progress(done_bytes: u64, total_bytes: u64) -> f32 {
     }
 }
 
+const COMPRESSED_VIEW_PAGE_SIZE: usize = 100;
 
 #[derive(Default)]
 struct CompressedFolderTotals {
@@ -47,14 +46,33 @@ struct CompressedFolderTotals {
     physical_size: u64,
 }
 
-fn build_compressed_report(folder: &FolderInfo, decimal: bool) -> String {
-    let summary = folder.compressed.summary();
-    let saved = summary.logical_size.saturating_sub(summary.physical_size);
-    let mut folders: BTreeMap<PathBuf, CompressedFolderTotals> = BTreeMap::new();
-    let mut files: Vec<&FileInfo> = folder.compressed.files.iter().collect();
+fn path_matches_query(path: &Path, query: &str) -> bool {
+    query.is_empty() || path.to_string_lossy().to_lowercase().contains(query)
+}
+
+fn compressed_file_items(folder: &FolderInfo, query: &str) -> Vec<CompressedViewItem> {
+    let mut files: Vec<&FileInfo> = folder
+        .compressed
+        .files
+        .iter()
+        .filter(|fi| path_matches_query(&fi.path, query))
+        .collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
-    for fi in &files {
+    files
+        .into_iter()
+        .map(|fi| CompressedViewItem::File {
+            path: fi.path.clone(),
+            logical_size: fi.logical_size,
+            physical_size: fi.physical_size,
+        })
+        .collect()
+}
+
+fn compressed_folder_items(folder: &FolderInfo, query: &str) -> Vec<CompressedViewItem> {
+    let mut folders: BTreeMap<PathBuf, CompressedFolderTotals> = BTreeMap::new();
+
+    for fi in &folder.compressed.files {
         let parent = fi
             .path
             .parent()
@@ -67,51 +85,37 @@ fn build_compressed_report(folder: &FolderInfo, decimal: bool) -> String {
         totals.physical_size = totals.physical_size.saturating_add(fi.physical_size);
     }
 
-    let mut report = String::new();
-    writeln!(&mut report, "Compactor compressed-file report").unwrap();
-    writeln!(&mut report, "Root: {}", folder.path.display()).unwrap();
-    writeln!(&mut report).unwrap();
-    writeln!(&mut report, "{} compressed files", summary.count).unwrap();
-    writeln!(&mut report, "Logical size: {}", format_size(summary.logical_size, decimal)).unwrap();
-    writeln!(&mut report, "On-disk size: {}", format_size(summary.physical_size, decimal)).unwrap();
-    writeln!(&mut report, "Saved: {}", format_size(saved, decimal)).unwrap();
-    writeln!(&mut report).unwrap();
-    writeln!(&mut report, "Folders containing compressed files").unwrap();
-    writeln!(&mut report, "Count\tLogical\tOn-disk\tSaved\tFolder").unwrap();
+    folders
+        .into_iter()
+        .filter(|(path, _)| path_matches_query(path, query))
+        .map(|(path, totals)| CompressedViewItem::Folder {
+            path,
+            count: totals.count,
+            logical_size: totals.logical_size,
+            physical_size: totals.physical_size,
+        })
+        .collect()
+}
 
-    for (path, totals) in folders {
-        writeln!(
-            &mut report,
-            "{}\t{}\t{}\t{}\t{}",
-            totals.count,
-            format_size(totals.logical_size, decimal),
-            format_size(totals.physical_size, decimal),
-            format_size(
-                totals.logical_size.saturating_sub(totals.physical_size),
-                decimal,
-            ),
-            path.display(),
-        )
-        .unwrap();
-    }
+fn paginate_compressed_items(
+    items: Vec<CompressedViewItem>,
+    page: usize,
+) -> (usize, usize, usize, Vec<CompressedViewItem>) {
+    let total = items.len();
+    let pages = if total == 0 {
+        1
+    } else {
+        (total + COMPRESSED_VIEW_PAGE_SIZE - 1) / COMPRESSED_VIEW_PAGE_SIZE
+    };
+    let page = page.min(pages - 1);
+    let start = page.saturating_mul(COMPRESSED_VIEW_PAGE_SIZE);
+    let page_items = items
+        .into_iter()
+        .skip(start)
+        .take(COMPRESSED_VIEW_PAGE_SIZE)
+        .collect();
 
-    writeln!(&mut report).unwrap();
-    writeln!(&mut report, "Compressed files").unwrap();
-    writeln!(&mut report, "Logical\tOn-disk\tSaved\tFile").unwrap();
-
-    for fi in files {
-        writeln!(
-            &mut report,
-            "{}\t{}\t{}\t{}",
-            format_size(fi.logical_size, decimal),
-            format_size(fi.physical_size, decimal),
-            format_size(fi.logical_size.saturating_sub(fi.physical_size), decimal),
-            fi.path.display(),
-        )
-        .unwrap();
-    }
-
-    report
+    (page, pages, total, page_items)
 }
 
 impl<T> Backend<T> {
@@ -139,8 +143,8 @@ impl<T> Backend<T> {
                     self.gui.folder(&path);
                     self.scan_loop(path);
                 }
-                Ok(GuiRequest::ViewCompressed) if self.info.is_some() => {
-                    self.view_compressed();
+                Ok(GuiRequest::ViewCompressed { view, query, page }) if self.info.is_some() => {
+                    self.view_compressed(view, query, page);
                 }
                 Ok(GuiRequest::Compress) if self.info.is_some() => {
                     self.compress_loop();
@@ -228,42 +232,49 @@ impl<T> Backend<T> {
         }
     }
 
-    fn view_compressed(&self) {
+    fn view_compressed(&self, view: String, query: String, page: usize) {
         let Some(folder) = self.info.as_ref() else {
             return;
         };
-        let decimal = config().read().unwrap().current().decimal;
-        let report_path = std::env::temp_dir().join("Compactor-compressed-files.txt");
 
-        if let Err(err) = fs::write(&report_path, build_compressed_report(folder, decimal)) {
-            self.gui.status(
-                format!("Unable to create compressed-file report: {}", err),
-                Some(1.0),
-            );
-            return;
-        }
+        let query = query.trim().to_string();
+        let query_match = query.to_lowercase();
+        let view = if view.eq_ignore_ascii_case("folders") {
+            "folders"
+        } else {
+            "files"
+        };
+        let items = if view == "folders" {
+            compressed_folder_items(folder, &query_match)
+        } else {
+            compressed_file_items(folder, &query_match)
+        };
+        let (page, pages, total, items) = paginate_compressed_items(items, page);
+        let summary = folder.compressed.summary();
 
-        if let Err(err) = open::that(&report_path) {
-            self.gui.status(
-                format!("Unable to open compressed-file report: {}", err),
-                Some(1.0),
-            );
-        }
+        self.gui.send(&GuiResponse::CompressedView {
+            root: folder.path.clone(),
+            view: view.to_string(),
+            query,
+            page,
+            pages,
+            total,
+            compressed_count: summary.count,
+            logical_size: summary.logical_size,
+            physical_size: summary.physical_size,
+            items,
+        });
     }
 
     fn compress_loop(&mut self) {
         let current = config().read().unwrap().current();
         let compression = Some(current.compression);
         let mut folder = self.info.take().expect("fileinfo");
-        let worker_count = worker_count_for_path(
-            &folder.path,
-            current.max_threads,
-            current.hdd_single_thread,
-        );
+        let worker_count =
+            worker_count_for_path(&folder.path, current.max_threads, current.hdd_single_thread);
 
         let (send_file, send_file_rx) = bounded::<(PathBuf, u64)>(worker_count);
-        let (recv_result_tx, recv_result) =
-            bounded::<(PathBuf, io::Result<bool>)>(worker_count);
+        let (recv_result_tx, recv_result) = bounded::<(PathBuf, io::Result<bool>)>(worker_count);
         let mut tasks = Vec::with_capacity(worker_count);
 
         for _ in 0..worker_count {
@@ -347,10 +358,8 @@ impl<T> Backend<T> {
                     Ok(GuiRequest::Resume) if paused && !stopped => {
                         paused = false;
                         self.gui.resumed();
-                        self.gui.status(
-                            "Compacting",
-                            Some(progress(done_bytes, total_bytes)),
-                        );
+                        self.gui
+                            .status("Compacting", Some(progress(done_bytes, total_bytes)));
                     }
                     Ok(GuiRequest::Stop) if !stopped => {
                         stopped = true;
@@ -436,13 +445,13 @@ impl<T> Backend<T> {
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {
-                    if paused && pending.is_empty() && last_update.elapsed() > Duration::from_millis(50)
+                    if paused
+                        && pending.is_empty()
+                        && last_update.elapsed() > Duration::from_millis(50)
                     {
                         last_update = Instant::now();
-                        self.gui.status(
-                            "Paused",
-                            Some(progress(done_bytes, total_bytes)),
-                        );
+                        self.gui
+                            .status("Paused", Some(progress(done_bytes, total_bytes)));
                         self.gui.summary(folder.summary());
                     }
                 }
@@ -569,7 +578,8 @@ impl<T> Backend<T> {
 
                 let mut waiting = false;
                 loop {
-                    if let Ok((_path, result)) = recv_result.recv_timeout(Duration::from_millis(25)) {
+                    if let Ok((_path, result)) = recv_result.recv_timeout(Duration::from_millis(25))
+                    {
                         done_files += 1;
                         done_bytes = done_bytes.saturating_add(logical_size);
 
@@ -667,38 +677,93 @@ impl<T> Backend<T> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn sample_compressed_folder() -> FolderInfo {
+        let mut folder = FolderInfo::new(PathBuf::from("C:").join("Games"));
+
+        for (path, logical_size, physical_size) in [
+            (PathBuf::from("Data").join("one.bin"), 8192, 4096),
+            (PathBuf::from("Data").join("two.bin"), 16384, 8192),
+            (
+                PathBuf::from("Data").join("Sub").join("three.bin"),
+                32768,
+                12288,
+            ),
+        ] {
+            folder.push(
+                FileKind::Compressed,
+                FileInfo {
+                    path,
+                    logical_size,
+                    physical_size,
+                    estimated_physical_size: physical_size,
+                },
+            );
+        }
+
+        folder
+    }
+
     #[test]
-    fn compressed_report_lists_folders_and_files() {
-        let mut folder = FolderInfo::new(r"C:\Games");
-        folder.push(
-            FileKind::Compressed,
-            FileInfo {
-                path: PathBuf::from(r"Data\one.bin"),
+    fn compressed_file_view_filters_paths() {
+        let folder = sample_compressed_folder();
+        let items = compressed_file_items(&folder, "sub");
+
+        assert_eq!(1, items.len());
+        match &items[0] {
+            CompressedViewItem::File { path, .. } => {
+                assert_eq!(&PathBuf::from("Data").join("Sub").join("three.bin"), path);
+            }
+            _ => panic!("expected file item"),
+        }
+    }
+
+    #[test]
+    fn compressed_folder_view_groups_files() {
+        let folder = sample_compressed_folder();
+        let items = compressed_folder_items(&folder, "");
+
+        assert_eq!(2, items.len());
+        let data = items
+            .iter()
+            .find(|item| match item {
+                CompressedViewItem::Folder { path, .. } => path == &PathBuf::from("Data"),
+                _ => false,
+            })
+            .expect("Data folder");
+
+        match data {
+            CompressedViewItem::Folder {
+                count,
+                logical_size,
+                physical_size,
+                ..
+            } => {
+                assert_eq!(2, *count);
+                assert_eq!(24576, *logical_size);
+                assert_eq!(12288, *physical_size);
+            }
+            _ => panic!("expected folder item"),
+        }
+    }
+
+    #[test]
+    fn compressed_view_pagination_clamps_page() {
+        let items = (0..3)
+            .map(|index| CompressedViewItem::File {
+                path: PathBuf::from(format!("{}.bin", index)),
                 logical_size: 8192,
                 physical_size: 4096,
-                estimated_physical_size: 4096,
-            },
-        );
-        folder.push(
-            FileKind::Compressed,
-            FileInfo {
-                path: PathBuf::from(r"Data\Sub\two.bin"),
-                logical_size: 16384,
-                physical_size: 8192,
-                estimated_physical_size: 8192,
-            },
-        );
+            })
+            .collect();
 
-        let report = build_compressed_report(&folder, false);
-        assert!(report.contains("2 compressed files"));
-        assert!(report.contains(r"Data\one.bin"));
-        assert!(report.contains(r"Data\Sub\two.bin"));
-        assert!(report.contains("Folders containing compressed files"));
-        assert!(report.contains("Compressed files"));
+        let (page, pages, total, page_items) = paginate_compressed_items(items, usize::MAX);
+        assert_eq!(0, page);
+        assert_eq!(1, pages);
+        assert_eq!(3, total);
+        assert_eq!(3, page_items.len());
     }
 }

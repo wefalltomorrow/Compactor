@@ -169,9 +169,14 @@ var Action = (function() {
 			external.invoke(JSON.stringify({ type: 'Decompress' }));
 		},
 
-		view_compressed: function() {
-			external.invoke(JSON.stringify({ type: 'ViewCompressed' }));
-		},
+\t\tview_compressed: function(view, query, page) {
+\t\t\texternal.invoke(JSON.stringify({
+\t\t\t\ttype: 'ViewCompressed',
+\t\t\t\tview: view,
+\t\t\t\tquery: query,
+\t\t\t\tpage: page
+\t\t\t}));
+\t\t},
 
 		pause: function() {
 			external.invoke(JSON.stringify({ type: 'Pause' }));
@@ -233,15 +238,35 @@ var Response = (function() {
 				case "FolderSummary":
 					Gui.set_folder_summary(msg.info);
 					break;
+
+				case "CompressedView":
+					Gui.set_compressed_view(msg);
+					break;
 			}
 		}
 	};
 })();
 
 var Gui = (function() {
-	"use strict";
+\t"use strict";
 
-	return {
+\tvar compressedView = {
+\t\tview: "files",
+\t\tpage: 0,
+\t\tpages: 1
+\t};
+
+\tvar compressedSearch = Util.debounce(function() {
+\t\tGui.request_compressed(0);
+\t}, 200);
+
+\tvar addTableCell = function(row, value, className) {
+\t\tvar cell = $("<td></td>").text(value);
+\t\tif (className) cell.addClass(className);
+\t\trow.append(cell);
+\t};
+
+\treturn {
 		boot: function() {
 			$("a[href]").on("click", function(e) {
 				e.preventDefault();
@@ -268,6 +293,8 @@ var Gui = (function() {
 			$("#Button_Reset").on("click", function() {
 				Action.reset_config();
 			});
+
+			$("#Compressed_View_Search").on("input", compressedSearch);
 		},
 
 		page: function(page) {
@@ -276,6 +303,96 @@ var Gui = (function() {
 			$("section.page").hide();
 			$("#" + page).show();
 		},
+
+\t\topen_compressed_view: function() {
+\t\t\tcompressedView.view = "files";
+\t\t\tcompressedView.page = 0;
+\t\t\tcompressedView.pages = 1;
+\t\t\t$("#Compressed_View_Search").val("");
+\t\t\tGui.page("CompressedFiles");
+\t\t\tGui.request_compressed(0);
+\t\t},
+
+\t\trequest_compressed: function(page) {
+\t\t\tvar query = $("#Compressed_View_Search").val() || "";
+\t\t\tvar requestedPage = parseInt(page, 10);
+\t\t\tif (isNaN(requestedPage) || requestedPage < 0) requestedPage = 0;
+\t\t\tAction.view_compressed(compressedView.view, query, requestedPage);
+\t\t},
+
+\t\tset_compressed_mode: function(view) {
+\t\t\tcompressedView.view = view == "folders" ? "folders" : "files";
+\t\t\tGui.request_compressed(0);
+\t\t},
+
+\t\tcompressed_page: function(delta) {
+\t\t\tGui.request_compressed(compressedView.page + delta);
+\t\t},
+
+\t\tset_compressed_view: function(data) {
+\t\t\tcompressedView.view = data.view == "folders" ? "folders" : "files";
+\t\t\tcompressedView.page = data.page;
+\t\t\tcompressedView.pages = data.pages;
+
+\t\t\t$("#Compressed_View_Root").text(data.root);
+\t\t\t$("#Compressed_View_Summary").text(
+\t\t\t\tUtil.format_number(data.compressed_count, 0) + " compressed files - " +
+\t\t\t\tUtil.bytes_to_human(data.logical_size) + " logical - " +
+\t\t\t\tUtil.bytes_to_human(data.physical_size) + " on-disk - " +
+\t\t\t\tUtil.bytes_to_human(Math.max(0, data.logical_size - data.physical_size)) + " saved"
+\t\t\t);
+
+\t\t\t$(".compressed-view-mode").removeClass("active");
+\t\t\tif (compressedView.view == "folders") {
+\t\t\t\t$("#Button_Compressed_Folders").addClass("active");
+\t\t\t} else {
+\t\t\t\t$("#Button_Compressed_Files").addClass("active");
+\t\t\t}
+
+\t\t\tvar head = $("#Compressed_View_Head").empty();
+\t\t\tvar body = $("#Compressed_View_Body").empty();
+\t\t\tvar header = $("<tr></tr>");
+
+\t\t\tif (compressedView.view == "folders") {
+\t\t\t\taddTableCell(header, "Files");
+\t\t\t}
+\t\t\taddTableCell(header, "Logical");
+\t\t\taddTableCell(header, "On-disk");
+\t\t\taddTableCell(header, "Saved");
+\t\t\taddTableCell(header, compressedView.view == "folders" ? "Folder" : "File", "path");
+\t\t\thead.append(header);
+
+\t\t\tdata.items.forEach(function(item) {
+\t\t\t\tvar row = $("<tr></tr>");
+\t\t\t\tif (compressedView.view == "folders") {
+\t\t\t\t\taddTableCell(row, Util.format_number(item.count, 0));
+\t\t\t\t}
+\t\t\t\taddTableCell(row, Util.bytes_to_human(item.logical_size));
+\t\t\t\taddTableCell(row, Util.bytes_to_human(item.physical_size));
+\t\t\t\taddTableCell(row, Util.bytes_to_human(Math.max(0, item.logical_size - item.physical_size)));
+\t\t\t\taddTableCell(row, item.path, "path");
+\t\t\t\tbody.append(row);
+\t\t\t});
+
+\t\t\tif (data.items.length === 0) {
+\t\t\t\tvar empty = $("<tr></tr>");
+\t\t\t\tempty.append(
+\t\t\t\t\t$("<td></td>")
+\t\t\t\t\t\t.attr("colspan", compressedView.view == "folders" ? 5 : 4)
+\t\t\t\t\t\t.addClass("empty")
+\t\t\t\t\t\t.text("No matching compressed " + compressedView.view)
+\t\t\t\t);
+\t\t\t\tbody.append(empty);
+\t\t\t}
+
+\t\t\t$("#Compressed_View_Page").text(
+\t\t\t\t"Page " + Util.format_number(data.page + 1, 0) + " of " +
+\t\t\t\tUtil.format_number(data.pages, 0) + " - " +
+\t\t\t\tUtil.format_number(data.total, 0) + " " + compressedView.view
+\t\t\t);
+\t\t\t$("#Button_Compressed_Previous").prop("disabled", data.page <= 0);
+\t\t\t$("#Button_Compressed_Next").prop("disabled", data.page + 1 >= data.pages);
+\t\t},
 
 		version: function(date, version) {
 			$(".compile-date").text(date);

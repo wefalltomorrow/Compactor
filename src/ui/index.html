@@ -49,7 +49,7 @@
       <section id="Analysis" style="display: none;">
         <div>
           <div class="saved"><span class="box">&nbsp;&nbsp;&nbsp;&nbsp;</span> <span id="Space_Saved">0 B</span> of <span id="Size_Logical">0 B</span> saved (<span id="Compress_Ratio">1.00</span>x, <span id="Size_Physical">0 B</span> on-disk)</div>
-          <div class="compressed"><span class="box">&nbsp;&nbsp;&nbsp;&nbsp;</span> <span id="Compressed_Size">0 B</span> in <span id="File_Count_Compressed">0</span> compressed <button id="Button_View_Compressed" class="details" style="display:none" title="Open a report of compressed files and their containing folders" onclick="Action.view_compressed()">View</button></div>
+          <div class="compressed"><span class="box">&nbsp;&nbsp;&nbsp;&nbsp;</span> <span id="Compressed_Size">0 B</span> in <span id="File_Count_Compressed">0</span> compressed <button id="Button_View_Compressed" class="details" style="display:none" title="View compressed files and their containing folders" onclick="Gui.open_compressed_view()">View</button></div>
           <div class="compressible"><span class="box">&nbsp;&nbsp;&nbsp;&nbsp;</span> <span id="Compressible_Size">0 B</span> in <span id="File_Count_Compressible">0</span> compressible</div>
           <div class="estimated"><span class="box">&nbsp;&nbsp;&nbsp;&nbsp;</span> Estimated after compacting: <span id="Estimated_Physical">0 B</span> on-disk (~<span id="Estimated_Savings">0 B</span> additional savings)</div>
           <div class="excluded"><span class="box">&nbsp;&nbsp;&nbsp;&nbsp;</span> <span id="Skipped_Size">0 B</span> in <span id="File_Count_Skipped">0</span> excluded</div>
@@ -62,6 +62,35 @@
           <div id="Breakdown_Saved"></div>
         </div>
       </section>
+    </section>
+
+    <section class="page" id="CompressedFiles" style="display: none;">
+      <div id="Compressed_View_Header">
+        <button class="analyse" onclick="Gui.page('Compress')">Back</button>
+        <strong>Compressed Files</strong>
+      </div>
+
+      <div id="Compressed_View_Root"></div>
+      <div id="Compressed_View_Summary"></div>
+
+      <div id="Compressed_View_Controls">
+        <button id="Button_Compressed_Files" class="compressed-view-mode active" onclick="Gui.set_compressed_mode('files')">Files</button>
+        <button id="Button_Compressed_Folders" class="compressed-view-mode" onclick="Gui.set_compressed_mode('folders')">Folders</button>
+        <input id="Compressed_View_Search" type="search" placeholder="Filter by path" autocomplete="off" spellcheck="false">
+      </div>
+
+      <div id="Compressed_View_Table_Wrap">
+        <table id="Compressed_View_Table">
+          <thead id="Compressed_View_Head"></thead>
+          <tbody id="Compressed_View_Body"></tbody>
+        </table>
+      </div>
+
+      <div id="Compressed_View_Pagination" class="ctr">
+        <button id="Button_Compressed_Previous" class="analyse" onclick="Gui.compressed_page(-1)">Previous</button>
+        <span id="Compressed_View_Page"></span>
+        <button id="Button_Compressed_Next" class="analyse" onclick="Gui.compressed_page(1)">Next</button>
+      </div>
     </section>
 
     <section class="page" id="Settings" style="display: none;">

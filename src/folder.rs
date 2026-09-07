@@ -16,7 +16,7 @@ use winapi::shared::minwindef::DWORD;
 use winapi::shared::ntdef::PVOID;
 use winapi::um::ioapiset::DeviceIoControl;
 use winapi::um::winioctl::{
-    IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, StorageDeviceSeekPenaltyProperty,
+    PropertyStandardQuery, StorageDeviceSeekPenaltyProperty, IOCTL_STORAGE_QUERY_PROPERTY,
     STORAGE_PROPERTY_QUERY,
 };
 use winapi::um::winnt::{
@@ -517,12 +517,8 @@ impl Background for FolderScan {
             .map(|count| count.get())
             .unwrap_or(1);
         let seek_penalty = volume_incurs_seek_penalty(&path);
-        let analysis_workers = worker_count_for_storage(
-            cpus,
-            seek_penalty,
-            max_threads,
-            hdd_single_thread,
-        );
+        let analysis_workers =
+            worker_count_for_storage(cpus, seek_penalty, max_threads, hdd_single_thread);
         let is_hdd = matches!(seek_penalty, Some(true));
         let mut candidates: VecDeque<EstimateCandidate> = VecDeque::new();
         let inline_estimator = if analysis_workers == 1 {

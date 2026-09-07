@@ -16,9 +16,7 @@ use winapi::shared::ntdef::PVOID;
 use winapi::shared::winerror::{HRESULT_CODE, SUCCEEDED};
 use winapi::um::ioapiset::DeviceIoControl;
 use winapi::um::winioctl::{FSCTL_DELETE_EXTERNAL_BACKING, FSCTL_SET_EXTERNAL_BACKING};
-use winapi::um::winnt::{
-    FILE_READ_DATA, FILE_WRITE_ATTRIBUTES, HANDLE, HRESULT, LPCWSTR,
-};
+use winapi::um::winnt::{FILE_READ_DATA, FILE_WRITE_ATTRIBUTES, HANDLE, HRESULT, LPCWSTR};
 use winapi::um::winver::{GetFileVersionInfoA, GetFileVersionInfoSizeA, VerQueryValueA};
 
 #[repr(C)]
