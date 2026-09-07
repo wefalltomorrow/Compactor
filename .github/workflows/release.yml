@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Read release version
+        shell: pwsh
+        run: |
+          $match = Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1
+          if (-not $match) {
+            throw 'Could not read package version from Cargo.toml.'
+          }
+
+          $version = $match.Matches[0].Groups[1].Value
+          "VERSION=$version" >> $env:GITHUB_ENV
+          "TAG=v$version" >> $env:GITHUB_ENV
+
+      - name: Verify changelog entry
+        shell: pwsh
+        run: |
+          $lines = Get-Content CHANGELOG.md
+          $heading = "## [$env:VERSION]"
+          $start = -1
+
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i].StartsWith($heading)) {
+              $start = $i
+              break
+            }
+          }
+
+          if ($start -lt 0) {
+            throw "CHANGELOG.md does not contain an entry for $env:VERSION."
+          }
+
+          $end = $lines.Count
+          for ($i = $start + 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i].StartsWith('## ')) {
+              $end = $i
+              break
+            }
+          }
+
+          $notes = $lines[($start + 1)..($end - 1)] -join "`n"
+          $notes = $notes.Trim()
+          if (-not $notes) {
+            throw "The changelog entry for $env:VERSION is empty."
+          }
+
+          Set-Content -Path release-notes.md -Value $notes -Encoding utf8
+
+      - name: Build release x64
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Run tests
+        run: cargo test --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Create tag
+        shell: pwsh
+        run: |
+          git fetch --tags
+          git rev-parse $env:TAG 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $tagCommit = (git rev-list -n 1 $env:TAG).Trim()
+            if ($tagCommit -ne $env:GITHUB_SHA) {
+              throw "$env:TAG already exists on a different commit."
+            }
+            Write-Host "$env:TAG already exists on this commit."
+          } else {
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a $env:TAG -m "Compactor $env:TAG"
+            git push origin $env:TAG
+          }
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            throw "A GitHub Release already exists for $env:TAG."
+          }
+
+          gh release create $env:TAG `
+            "target/x86_64-pc-windows-msvc/release/Compactor.exe" `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "Compactor $env:TAG" `
+            --notes-file release-notes.md `
+            --verify-tag
