@@ -1,0 +1,236 @@
+from pathlib import Path
+
+
+def replace(path, old, new):
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+    if old not in text:
+        raise RuntimeError(f"Expected text not found in {path}: {old[:80]!r}")
+    p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+replace(
+    "src/gui.rs",
+    "    Decompress,\n    Pause,",
+    "    Decompress,\n    ViewCompressed,\n    Pause,",
+)
+
+replace(
+    "src/backend.rs",
+    "use std::collections::HashMap;\nuse std::io;\nuse std::path::PathBuf;",
+    "use std::collections::{BTreeMap, HashMap};\nuse std::fmt::Write;\nuse std::fs;\nuse std::io;\nuse std::path::{Path, PathBuf};",
+)
+
+report_helpers = r'''
+
+#[derive(Default)]
+struct CompressedFolderTotals {
+    count: usize,
+    logical_size: u64,
+    physical_size: u64,
+}
+
+fn build_compressed_report(folder: &FolderInfo, decimal: bool) -> String {
+    let summary = folder.compressed.summary();
+    let saved = summary.logical_size.saturating_sub(summary.physical_size);
+    let mut folders: BTreeMap<PathBuf, CompressedFolderTotals> = BTreeMap::new();
+    let mut files: Vec<&FileInfo> = folder.compressed.files.iter().collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    for fi in &files {
+        let parent = fi
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let totals = folders.entry(parent).or_default();
+        totals.count += 1;
+        totals.logical_size = totals.logical_size.saturating_add(fi.logical_size);
+        totals.physical_size = totals.physical_size.saturating_add(fi.physical_size);
+    }
+
+    let mut report = String::new();
+    writeln!(&mut report, "Compactor compressed-file report").unwrap();
+    writeln!(&mut report, "Root: {}", folder.path.display()).unwrap();
+    writeln!(&mut report).unwrap();
+    writeln!(&mut report, "{} compressed files", summary.count).unwrap();
+    writeln!(&mut report, "Logical size: {}", format_size(summary.logical_size, decimal)).unwrap();
+    writeln!(&mut report, "On-disk size: {}", format_size(summary.physical_size, decimal)).unwrap();
+    writeln!(&mut report, "Saved: {}", format_size(saved, decimal)).unwrap();
+    writeln!(&mut report).unwrap();
+    writeln!(&mut report, "Folders containing compressed files").unwrap();
+    writeln!(&mut report, "Count\tLogical\tOn-disk\tSaved\tFolder").unwrap();
+
+    for (path, totals) in folders {
+        writeln!(
+            &mut report,
+            "{}\t{}\t{}\t{}\t{}",
+            totals.count,
+            format_size(totals.logical_size, decimal),
+            format_size(totals.physical_size, decimal),
+            format_size(
+                totals.logical_size.saturating_sub(totals.physical_size),
+                decimal,
+            ),
+            path.display(),
+        )
+        .unwrap();
+    }
+
+    writeln!(&mut report).unwrap();
+    writeln!(&mut report, "Compressed files").unwrap();
+    writeln!(&mut report, "Logical\tOn-disk\tSaved\tFile").unwrap();
+
+    for fi in files {
+        writeln!(
+            &mut report,
+            "{}\t{}\t{}\t{}",
+            format_size(fi.logical_size, decimal),
+            format_size(fi.physical_size, decimal),
+            format_size(fi.logical_size.saturating_sub(fi.physical_size), decimal),
+            fi.path.display(),
+        )
+        .unwrap();
+    }
+
+    report
+}
+'''
+replace(
+    "src/backend.rs",
+    "fn progress(done_bytes: u64, total_bytes: u64) -> f32 {\n    if total_bytes == 0 {\n        1.0\n    } else {\n        (done_bytes as f64 / total_bytes as f64).min(1.0) as f32\n    }\n}\n",
+    "fn progress(done_bytes: u64, total_bytes: u64) -> f32 {\n    if total_bytes == 0 {\n        1.0\n    } else {\n        (done_bytes as f64 / total_bytes as f64).min(1.0) as f32\n    }\n}\n" + report_helpers,
+)
+
+replace(
+    "src/backend.rs",
+    "                Ok(GuiRequest::Compress) if self.info.is_some() => {\n                    self.compress_loop();\n                }",
+    "                Ok(GuiRequest::ViewCompressed) if self.info.is_some() => {\n                    self.view_compressed();\n                }\n                Ok(GuiRequest::Compress) if self.info.is_some() => {\n                    self.compress_loop();\n                }",
+)
+
+view_method = r'''    fn view_compressed(&self) {
+        let Some(folder) = self.info.as_ref() else {
+            return;
+        };
+        let decimal = config().read().unwrap().current().decimal;
+        let report_path = std::env::temp_dir().join("Compactor-compressed-files.txt");
+
+        if let Err(err) = fs::write(&report_path, build_compressed_report(folder, decimal)) {
+            self.gui.status(
+                format!("Unable to create compressed-file report: {}", err),
+                Some(1.0),
+            );
+            return;
+        }
+
+        if let Err(err) = open::that(&report_path) {
+            self.gui.status(
+                format!("Unable to open compressed-file report: {}", err),
+                Some(1.0),
+            );
+        }
+    }
+
+'''
+replace(
+    "src/backend.rs",
+    "    fn compress_loop(&mut self) {",
+    view_method + "    fn compress_loop(&mut self) {",
+)
+
+tests = r'''
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compressed_report_lists_folders_and_files() {
+        let mut folder = FolderInfo::new(r"C:\Games");
+        folder.push(
+            FileKind::Compressed,
+            FileInfo {
+                path: PathBuf::from(r"Data\one.bin"),
+                logical_size: 8192,
+                physical_size: 4096,
+                estimated_physical_size: 4096,
+            },
+        );
+        folder.push(
+            FileKind::Compressed,
+            FileInfo {
+                path: PathBuf::from(r"Data\Sub\two.bin"),
+                logical_size: 16384,
+                physical_size: 8192,
+                estimated_physical_size: 8192,
+            },
+        );
+
+        let report = build_compressed_report(&folder, false);
+        assert!(report.contains("2 compressed files"));
+        assert!(report.contains(r"Data\one.bin"));
+        assert!(report.contains(r"Data\Sub\two.bin"));
+        assert!(report.contains("Folders containing compressed files"));
+        assert!(report.contains("Compressed files"));
+    }
+}
+'''
+p = Path("src/backend.rs")
+p.write_text(p.read_text(encoding="utf-8") + tests, encoding="utf-8")
+
+replace(
+    "src/ui/app.js",
+    "\t\tdecompress: function() {\n\t\t\texternal.invoke(JSON.stringify({ type: 'Decompress' }));\n\t\t},\n",
+    "\t\tdecompress: function() {\n\t\t\texternal.invoke(JSON.stringify({ type: 'Decompress' }));\n\t\t},\n\n\t\tview_compressed: function() {\n\t\t\texternal.invoke(JSON.stringify({ type: 'ViewCompressed' }));\n\t\t},\n",
+)
+replace(
+    "src/ui/app.js",
+    "\t\t\t$(\"#Button_Decompress\").hide();\n\t\t\t$(\"#Command\").show();",
+    "\t\t\t$(\"#Button_Decompress\").hide();\n\t\t\t$(\"#Button_View_Compressed\").hide();\n\t\t\t$(\"#Command\").show();",
+)
+replace(
+    "src/ui/app.js",
+    "\t\t\t$(\"#Button_Decompress\").hide();\n\t\t},\n\n\t\tpaused: function() {",
+    "\t\t\t$(\"#Button_Decompress\").hide();\n\t\t\t$(\"#Button_View_Compressed\").hide();\n\t\t},\n\n\t\tpaused: function() {",
+)
+replace(
+    "src/ui/app.js",
+    "\t\t\tif ($(\"#File_Count_Compressed\").text() != \"0\") {\n\t\t\t\t$(\"#Button_Decompress\").show();\n\t\t\t} else {\n\t\t\t\t$(\"#Button_Decompress\").hide();\n\t\t\t}\n",
+    "\t\t\tif ($(\"#File_Count_Compressed\").text() != \"0\") {\n\t\t\t\t$(\"#Button_Decompress\").show();\n\t\t\t\t$(\"#Button_View_Compressed\").show();\n\t\t\t} else {\n\t\t\t\t$(\"#Button_Decompress\").hide();\n\t\t\t\t$(\"#Button_View_Compressed\").hide();\n\t\t\t}\n",
+)
+
+replace(
+    "src/ui/index.html",
+    "          <div class=\"compressed\"><span class=\"box\">&nbsp;&nbsp;&nbsp;&nbsp;</span> <span id=\"Compressed_Size\">0 B</span> in <span id=\"File_Count_Compressed\">0</span> compressed</div>",
+    "          <div class=\"compressed\"><span class=\"box\">&nbsp;&nbsp;&nbsp;&nbsp;</span> <span id=\"Compressed_Size\">0 B</span> in <span id=\"File_Count_Compressed\">0</span> compressed <button id=\"Button_View_Compressed\" class=\"details\" style=\"display:none\" title=\"Open a report of compressed files and their containing folders\" onclick=\"Action.view_compressed()\">View</button></div>",
+)
+
+p = Path("src/ui/style.css")
+p.write_text(
+    p.read_text(encoding="utf-8")
+    + "\n#Analysis button.details {\n  background-color: rgb(118, 118, 118);\n  padding: 2px 6px;\n  margin: 0 0 0 6px;\n  font-size: 0.75em;\n  vertical-align: middle;\n}\n",
+    encoding="utf-8",
+)
+
+replace(
+    "README.md",
+    "- HDD analysis sampling designed to reduce seek overhead\n- Pause, resume, and stop controls",
+    "- HDD analysis sampling designed to reduce seek overhead\n- On-demand report of WOF-compressed files and their containing folders\n- Pause, resume, and stop controls",
+)
+replace(
+    "README.md",
+    "Use Decompress to remove WOF backing from files previously compressed with Compactor.",
+    "Use Decompress to remove WOF backing from files previously compressed with Compactor. After analysis, select View beside the compressed count to open a searchable text report of compressed files and the folders containing them.",
+)
+replace(
+    "README.md",
+    "- Reduced-seek HDD analysis sampling\n- Windows x64 CI on stable Rust",
+    "- Reduced-seek HDD analysis sampling\n- On-demand compressed-file reporting\n- Windows x64 CI on stable Rust",
+)
+
+replace(
+    "CHANGELOG.md",
+    "## Unreleased\n\n## [0.11.1]",
+    "## Unreleased\n\n### Added\n\n- On-demand report listing WOF-compressed files and the folders containing them.\n\n## [0.11.1]",
+)
