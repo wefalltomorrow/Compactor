@@ -6,6 +6,15 @@
 
 - In-app viewer for WOF-compressed files and containing folders, with path filtering and pagination for large scans.
 
+### Changed
+
+- Auto threading now uses up to eight analysis workers and up to 16 compression workers on SSDs while retaining the single-thread HDD safeguard.
+- Compression reuses the analysis compressibility decision when file size and modification time are unchanged, avoiding duplicate sampling; changed files are re-estimated before compression.
+
+### Maintenance
+
+- Windows CI now validates the embedded JavaScript syntax before building.
+
 ## [0.11.1] - 2026-09-07
 
 ### Added

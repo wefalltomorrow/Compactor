@@ -35,7 +35,7 @@ This repository is a maintained fork of [Freaky/Compactor](https://github.com/Fr
   - `*:\\System Volume Information*`
   - `*:\\$*`
 
-`Auto` uses up to six worker threads on storage that Windows reports as having no seek penalty. HDDs use one thread by default, and unknown storage is handled conservatively with one thread. A manual limit from 1 to 16 can be set in Settings.
+`Auto` is storage- and workload-aware. On SSDs it uses up to eight workers for analysis and up to 16 logical-CPU workers for compression; HDDs use one worker by default to avoid seek thrashing, and unknown storage is handled conservatively with one worker. A manual limit from 1 to 16 can be set in Settings. Compression reuses a valid analysis estimate when the file has not changed, avoiding duplicate sampling before WOF compression.
 
 File extensions are not used to decide whether a file should be compressed. Eligible files are sampled and compared against the configured savings threshold.
 
