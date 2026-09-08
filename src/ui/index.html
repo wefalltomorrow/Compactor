@@ -96,52 +96,85 @@
     </section>
 
     <section class="page" id="Settings" style="display: none;">
-      <label>File patterns to exclude from compression<br>
-        <textarea name="exclude" id="Excludes" spellcheck="false" wrap="off"
-></textarea>
-      </label>
+      <div class="settings-panel">
+        <div class="settings-heading">
+          <h2>File exclusions</h2>
+          <p>One pattern per line. Matching files and folders are skipped.</p>
+        </div>
+        <textarea name="exclude" id="Excludes" spellcheck="false" wrap="off"></textarea>
+      </div>
 
-      <br>
+      <div class="settings-panel">
+        <div class="settings-heading">
+          <h2>Compression</h2>
+          <p>Choose how Compactor analyses and compresses eligible files.</p>
+        </div>
 
-      <label>Compression
-        <select id="Compression_Mode" name="Compression">
-          <option value="XPRESS4K">XPRESS4K (fast, low compression)</option>
-          <option value="XPRESS8K">XPRESS8K</option>
-          <option value="XPRESS16K">XPRESS16K</option>
-          <option value="LZX">LZX (default, slow, high compression)</option>
-        </select></label>
+        <div class="settings-grid">
+          <label class="setting-field">
+            <span class="setting-label">Compression algorithm</span>
+            <select id="Compression_Mode" name="Compression">
+              <option value="XPRESS4K">XPRESS4K (fast, low compression)</option>
+              <option value="XPRESS8K">XPRESS8K</option>
+              <option value="XPRESS16K">XPRESS16K</option>
+              <option value="LZX">LZX (default, slow, high compression)</option>
+            </select>
+          </label>
 
-      <label>Minimum estimated savings
-        <input id="Min_Savings" name="Min_Savings" type="number" min="0" max="100" step="0.1" value="1" style="width: 70px">%
-      </label>
+          <label class="setting-field">
+            <span class="setting-label">Minimum estimated savings</span>
+            <span class="setting-inline">
+              <input id="Min_Savings" name="Min_Savings" type="number" min="0" max="100" step="0.1" value="1">
+              <span class="setting-suffix">%</span>
+            </span>
+            <small class="setting-help">Files below this estimated saving are skipped.</small>
+          </label>
 
-      <label>Maximum threads
-        <input id="Max_Threads" name="Max_Threads" type="number" min="0" max="16" step="1" value="0" style="width: 70px"> <small title="Auto uses up to 8 analysis workers and up to 16 XPRESS compression workers on SSDs. LZX Auto uses a conservative 1-2 workers. A manual limit is respected for LZX too; the HDD single-thread safeguard still applies.">0 = Auto (hardware-aware)</small>
-      </label>
+          <label class="setting-field">
+            <span class="setting-label">Maximum worker threads</span>
+            <input id="Max_Threads" name="Max_Threads" type="number" min="0" max="16" step="1" value="0">
+            <small class="setting-help">0 = Auto. LZX Auto uses 1–2 workers; a manual value is respected.</small>
+          </label>
 
-      <label>Compression priority
-        <select id="Compression_Priority" name="Compression_Priority">
-          <option value="Lowest">Lowest</option>
-          <option value="BelowNormal">Below Normal (default)</option>
-          <option value="Normal">Normal</option>
-          <option value="AboveNormal">Above Normal</option>
-          <option value="Highest">Highest</option>
-        </select> <small title="Applies only to compression/decompression worker threads. Analysis and the GUI remain at normal priority.">worker threads only</small>
-      </label>
+          <label class="setting-field">
+            <span class="setting-label">Worker priority</span>
+            <select id="Compression_Priority" name="Compression_Priority">
+              <option value="Lowest">Lowest</option>
+              <option value="BelowNormal">Below Normal (default)</option>
+              <option value="Normal">Normal</option>
+              <option value="AboveNormal">Above Normal</option>
+              <option value="Highest">Highest</option>
+            </select>
+            <small class="setting-help">Compression/decompression workers only; the UI and analysis stay at Normal priority.</small>
+          </label>
 
-      <label>
-        <input id="HDD_Single_Thread" name="HDD_Single_Thread" type="checkbox" checked> HDDs only use 1 thread
-      </label>
+          <label class="setting-field setting-toggle">
+            <span class="setting-checkline">
+              <input id="HDD_Single_Thread" name="HDD_Single_Thread" type="checkbox" checked>
+              <span>Limit HDDs to 1 worker</span>
+            </span>
+            <small class="setting-help">Recommended to avoid excessive seeking on mechanical drives.</small>
+          </label>
+        </div>
+      </div>
 
-      <label>Units
-        <select id="SI_Units" name="SI_Units">
-          <option value="I">Binary (MiB)</option>
-          <option value="D">Decimal (MB)</option>
-        </select>
-      </label>
+      <div class="settings-panel settings-display">
+        <div class="settings-heading">
+          <h2>Display</h2>
+        </div>
+        <label class="setting-field">
+          <span class="setting-label">Units</span>
+          <select id="SI_Units" name="SI_Units">
+            <option value="I">Binary (MiB)</option>
+            <option value="D">Decimal (MB)</option>
+          </select>
+        </label>
+      </div>
 
-      <button id="Button_Save" class="save">Save</button>
-      <button id="Button_Reset" class="cancel">Reset</button>
+      <div class="settings-actions">
+        <button id="Button_Reset" class="cancel">Reset</button>
+        <button id="Button_Save" class="save">Save</button>
+      </div>
     </section>
 
     <section class="page" id="About" style="display: none;">
