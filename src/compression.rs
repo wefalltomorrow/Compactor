@@ -64,7 +64,6 @@ fn handle_file(
     compression: Option<Compression>,
     ratio_limit: f32,
 ) -> io::Result<bool> {
-    let meta = std::fs::metadata(&job.path)?;
     let handle = std::fs::OpenOptions::new()
         .access_mode(FILE_WRITE_ATTRIBUTES | FILE_READ_DATA)
         // Allow readers, but deny concurrent writers/deleters while a WOF
@@ -73,6 +72,11 @@ fn handle_file(
         .open(&job.path)?;
 
     handle.try_lock_exclusive()?;
+
+    // Read the fingerprint from the opened, protected handle. Reading metadata
+    // by path before opening left a small race where an updater could replace
+    // or modify the file between the metadata check and the share-denying open.
+    let meta = handle.metadata()?;
 
     let ret = match compression {
         Some(compression) => match reuse_estimate(job, meta.len(), meta.last_write_time()) {
