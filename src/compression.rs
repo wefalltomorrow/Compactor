@@ -54,11 +54,11 @@ impl BackgroundCompactor {
 
 fn thread_priority_value(priority: CompressionPriority) -> i32 {
     match priority {
-        CompressionPriority::Lowest => THREAD_PRIORITY_LOWEST,
-        CompressionPriority::BelowNormal => THREAD_PRIORITY_BELOW_NORMAL,
-        CompressionPriority::Normal => THREAD_PRIORITY_NORMAL,
-        CompressionPriority::AboveNormal => THREAD_PRIORITY_ABOVE_NORMAL,
-        CompressionPriority::Highest => THREAD_PRIORITY_HIGHEST,
+        CompressionPriority::Lowest => THREAD_PRIORITY_LOWEST as i32,
+        CompressionPriority::BelowNormal => THREAD_PRIORITY_BELOW_NORMAL as i32,
+        CompressionPriority::Normal => THREAD_PRIORITY_NORMAL as i32,
+        CompressionPriority::AboveNormal => THREAD_PRIORITY_ABOVE_NORMAL as i32,
+        CompressionPriority::Highest => THREAD_PRIORITY_HIGHEST as i32,
     }
 }
 
@@ -181,18 +181,24 @@ fn invalid_estimate_is_not_reused() {
 
 #[test]
 fn compression_priority_maps_to_safe_windows_levels() {
-    assert_eq!(THREAD_PRIORITY_LOWEST, thread_priority_value(CompressionPriority::Lowest));
     assert_eq!(
-        THREAD_PRIORITY_BELOW_NORMAL,
+        THREAD_PRIORITY_LOWEST as i32,
+        thread_priority_value(CompressionPriority::Lowest)
+    );
+    assert_eq!(
+        THREAD_PRIORITY_BELOW_NORMAL as i32,
         thread_priority_value(CompressionPriority::BelowNormal)
     );
-    assert_eq!(THREAD_PRIORITY_NORMAL, thread_priority_value(CompressionPriority::Normal));
     assert_eq!(
-        THREAD_PRIORITY_ABOVE_NORMAL,
+        THREAD_PRIORITY_NORMAL as i32,
+        thread_priority_value(CompressionPriority::Normal)
+    );
+    assert_eq!(
+        THREAD_PRIORITY_ABOVE_NORMAL as i32,
         thread_priority_value(CompressionPriority::AboveNormal)
     );
     assert_eq!(
-        THREAD_PRIORITY_HIGHEST,
+        THREAD_PRIORITY_HIGHEST as i32,
         thread_priority_value(CompressionPriority::Highest)
     );
 }
