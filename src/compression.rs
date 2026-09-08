@@ -6,7 +6,9 @@ use compresstimator::Compresstimator;
 use crossbeam_channel::{Receiver, Sender};
 use filetime::FileTime;
 use fs2::FileExt;
-use winapi::um::winnt::{FILE_READ_DATA, FILE_WRITE_ATTRIBUTES};
+use winapi::um::processthreadsapi::{GetCurrentThread, SetThreadPriority};
+use winapi::um::winbase::THREAD_PRIORITY_BELOW_NORMAL;
+use winapi::um::winnt::{FILE_READ_DATA, FILE_SHARE_READ, FILE_WRITE_ATTRIBUTES};
 
 use crate::background::Background;
 use crate::background::ControlToken;
@@ -65,6 +67,9 @@ fn handle_file(
     let meta = std::fs::metadata(&job.path)?;
     let handle = std::fs::OpenOptions::new()
         .access_mode(FILE_WRITE_ATTRIBUTES | FILE_READ_DATA)
+        // Allow readers, but deny concurrent writers/deleters while a WOF
+        // operation is in flight. This avoids racing game/app updates.
+        .share_mode(FILE_SHARE_READ)
         .open(&job.path)?;
 
     handle.try_lock_exclusive()?;
@@ -105,6 +110,13 @@ impl Background for BackgroundCompactor {
     type Status = ();
 
     fn run(self, control: &ControlToken<Self::Status>) -> Self::Output {
+        // Compression is deliberately background-friendly. WOF/LZX can be CPU
+        // intensive, so lower only these worker threads rather than the GUI or
+        // analysis thread. Failure to change priority is non-fatal.
+        unsafe {
+            let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        }
+
         for job in &self.files_in {
             if control.is_cancelled_with_pause() {
                 break;
