@@ -1,7 +1,8 @@
 name: Release
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [ "master" ]
 
 permissions:
   contents: write
@@ -12,6 +13,7 @@ env:
 
 jobs:
   release:
+    if: github.event.head_commit.message == 'Publish v0.11.4'
     runs-on: windows-latest
     timeout-minutes: 20
 
@@ -20,19 +22,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify release state
+      - name: Verify release target
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ($env:GITHUB_REF_NAME -ne 'master') {
-            throw 'Releases must be run from master.'
-          }
-
-          $currentCommit = (git rev-parse HEAD).Trim()
-          $remoteMaster = ((git ls-remote origin refs/heads/master) -split "`t")[0].Trim()
-          if ($currentCommit -ne $remoteMaster) {
-            throw 'Master changed after this release run started. Run the release workflow again.'
+          $releaseSha = (git rev-parse HEAD^).Trim()
+          $expectedSha = 'a39b60041f5fa2f130f78279084e4f2d39bf766f'
+          if ($releaseSha -ne $expectedSha) {
+            throw "Unexpected release target: $releaseSha"
           }
 
           $pullRequests = gh pr list `
@@ -43,44 +41,36 @@ jobs:
 
           $blocking = @($pullRequests | Where-Object { -not $_.isDraft })
           if ($blocking.Count -gt 0) {
-            Write-Host 'Open pull requests must be merged or converted to draft before a release:'
-            foreach ($pr in $blocking) {
-              Write-Host "  #$($pr.number) $($pr.title)"
-            }
-            throw 'Release blocked by open pull requests targeting master.'
+            throw 'Release blocked by open non-draft pull requests targeting master.'
           }
+
+          git checkout --detach $releaseSha
+          "VERSION=0.11.4" >> $env:GITHUB_ENV
+          "TAG=v0.11.4" >> $env:GITHUB_ENV
+          "RELEASE_SHA=$releaseSha" >> $env:GITHUB_ENV
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Read release version
+      - name: Verify version and changelog
         shell: pwsh
         run: |
           $match = Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1
-          if (-not $match) {
-            throw 'Could not read package version from Cargo.toml.'
+          if (-not $match -or $match.Matches[0].Groups[1].Value -ne $env:VERSION) {
+            throw 'Cargo.toml version does not match v0.11.4.'
           }
 
-          $version = $match.Matches[0].Groups[1].Value
-          "VERSION=$version" >> $env:GITHUB_ENV
-          "TAG=v$version" >> $env:GITHUB_ENV
-
-      - name: Verify changelog entry
-        shell: pwsh
-        run: |
           $lines = Get-Content CHANGELOG.md
           $heading = "## [$env:VERSION]"
           $start = -1
-
           for ($i = 0; $i -lt $lines.Count; $i++) {
             if ($lines[$i].StartsWith($heading)) {
               $start = $i
               break
             }
           }
-
           if ($start -lt 0) {
             throw "CHANGELOG.md does not contain an entry for $env:VERSION."
           }
@@ -98,8 +88,10 @@ jobs:
           if (-not $notes) {
             throw "The changelog entry for $env:VERSION is empty."
           }
-
           Set-Content -Path release-notes.md -Value $notes -Encoding utf8
+
+      - name: Validate embedded JavaScript
+        run: node --check src/ui/app.js
 
       - name: Build release x64
         run: cargo build --release --locked --target x86_64-pc-windows-msvc
@@ -113,17 +105,13 @@ jobs:
           git fetch --tags
           git rev-parse $env:TAG 2>$null
           if ($LASTEXITCODE -eq 0) {
-            $tagCommit = (git rev-list -n 1 $env:TAG).Trim()
-            if ($tagCommit -ne $env:GITHUB_SHA) {
-              throw "$env:TAG already exists on a different commit."
-            }
-            Write-Host "$env:TAG already exists on this commit."
-          } else {
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a $env:TAG -m "Compactor $env:TAG"
-            git push origin $env:TAG
+            throw "$env:TAG already exists."
           }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a $env:TAG $env:RELEASE_SHA -m "Compactor $env:TAG"
+          git push origin $env:TAG
 
       - name: Publish GitHub release
         shell: pwsh
