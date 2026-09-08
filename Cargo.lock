@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "compactor"
-version = "0.11.3"
+version = "0.11.4"
 dependencies = [
  "backtrace",
  "compresstimator",
