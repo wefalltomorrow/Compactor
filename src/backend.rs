@@ -5,11 +5,13 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError};
 use filesize::PathExt;
+use winapi::um::winbase::{SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED};
 
 use crate::background::BackgroundHandle;
 use crate::compression::{BackgroundCompactor, CompressionJob};
 use crate::folder::{
-    compression_worker_count_for_path, FileInfo, FileKind, FolderInfo, FolderScan,
+    compression_worker_count_for_path, validate_target_path, FileInfo, FileKind, FolderInfo,
+    FolderScan,
 };
 use crate::gui::{CompressedViewItem, GuiRequest, GuiResponse, GuiWrapper};
 use crate::persistence::{config, incompressible_key, pathdb};
@@ -18,6 +20,27 @@ pub struct Backend<T> {
     gui: GuiWrapper<T>,
     msg: Receiver<GuiRequest>,
     info: Option<FolderInfo>,
+}
+
+struct SystemAwakeGuard;
+
+impl SystemAwakeGuard {
+    fn new() -> Self {
+        // Keep the system awake during file transformations, but deliberately
+        // do not request ES_DISPLAY_REQUIRED: the monitor may still turn off.
+        unsafe {
+            let _ = SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);
+        }
+        Self
+    }
+}
+
+impl Drop for SystemAwakeGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = SetThreadExecutionState(ES_CONTINUOUS);
+        }
+    }
 }
 
 fn format_size(size: u64, decimal: bool) -> String {
@@ -129,6 +152,16 @@ impl<T> Backend<T> {
         }
     }
 
+    fn target_is_valid(&self, path: &Path) -> bool {
+        match validate_target_path(path) {
+            Ok(()) => true,
+            Err(message) => {
+                self.gui.error("Folder not supported", &message);
+                false
+            }
+        }
+    }
+
     pub fn run(&mut self) {
         loop {
             match self.msg.recv() {
@@ -136,23 +169,34 @@ impl<T> Backend<T> {
                     let path = self.gui.choose_folder().recv().ok().flatten();
 
                     if let Some(path) = path {
-                        self.gui.folder(&path);
-                        self.scan_loop(path);
+                        if self.target_is_valid(&path) {
+                            self.gui.folder(&path);
+                            self.scan_loop(path);
+                        }
                     }
                 }
                 Ok(GuiRequest::Analyse) if self.info.is_some() => {
-                    let path = self.info.take().unwrap().path;
-                    self.gui.folder(&path);
-                    self.scan_loop(path);
+                    let path = self.info.as_ref().unwrap().path.clone();
+                    if self.target_is_valid(&path) {
+                        self.info = None;
+                        self.gui.folder(&path);
+                        self.scan_loop(path);
+                    }
                 }
                 Ok(GuiRequest::ViewCompressed { view, query, page }) if self.info.is_some() => {
                     self.view_compressed(view, query, page);
                 }
                 Ok(GuiRequest::Compress) if self.info.is_some() => {
-                    self.compress_loop();
+                    let path = self.info.as_ref().unwrap().path.clone();
+                    if self.target_is_valid(&path) {
+                        self.compress_loop();
+                    }
                 }
                 Ok(GuiRequest::Decompress) if self.info.is_some() => {
-                    self.uncompress_loop();
+                    let path = self.info.as_ref().unwrap().path.clone();
+                    if self.target_is_valid(&path) {
+                        self.uncompress_loop();
+                    }
                 }
                 Ok(msg) => {
                     eprintln!("Backend: Ignored message: {:?}", msg);
@@ -174,6 +218,7 @@ impl<T> Backend<T> {
             path,
             excludes,
             ratio_limit,
+            current.compression,
             current.max_threads,
             current.hdd_single_thread,
         );
@@ -272,8 +317,10 @@ impl<T> Backend<T> {
         let current = config().read().unwrap().current();
         let compression = Some(current.compression);
         let mut folder = self.info.take().expect("fileinfo");
+        let _awake = SystemAwakeGuard::new();
         let worker_count = compression_worker_count_for_path(
             &folder.path,
+            current.compression,
             current.max_threads,
             current.hdd_single_thread,
         );
@@ -407,6 +454,7 @@ impl<T> Backend<T> {
                             if let Ok(metadata) = std::fs::metadata(&path) {
                                 use std::os::windows::fs::MetadataExt;
                                 fi.content_len = metadata.len();
+                                fi.logical_size = metadata.len();
                                 fi.modified_time = metadata.last_write_time();
                             }
 
@@ -522,6 +570,7 @@ impl<T> Backend<T> {
     }
 
     fn uncompress_loop(&mut self) {
+        let _awake = SystemAwakeGuard::new();
         let (send_file, send_file_rx) = bounded::<CompressionJob>(1);
         let (recv_result_tx, recv_result) = bounded::<(PathBuf, io::Result<bool>)>(1);
 
@@ -603,15 +652,20 @@ impl<T> Backend<T> {
 
                 let mut waiting = false;
                 loop {
-                    if let Ok((_path, result)) = recv_result.recv_timeout(Duration::from_millis(25))
-                    {
+                    if let Ok((path, result)) = recv_result.recv_timeout(Duration::from_millis(25)) {
                         done_files += 1;
                         done_bytes = done_bytes.saturating_add(logical_size);
 
                         match result {
                             Ok(_) => {
-                                fi.physical_size = fi.logical_size;
-                                fi.estimated_physical_size = fi.logical_size;
+                                fi.physical_size = path.size_on_disk().unwrap_or(fi.logical_size);
+                                fi.estimated_physical_size = fi.physical_size;
+                                if let Ok(metadata) = std::fs::metadata(&path) {
+                                    use std::os::windows::fs::MetadataExt;
+                                    fi.content_len = metadata.len();
+                                    fi.logical_size = metadata.len();
+                                    fi.modified_time = metadata.last_write_time();
+                                }
                                 folder.push(FileKind::Compressible, fi);
                             }
                             Err(err) => {
