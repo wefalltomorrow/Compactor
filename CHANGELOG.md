@@ -172,7 +172,7 @@
 [0.10.0]: https://github.com/Freaky/Compactor/releases/tag/v0.10.0
 [0.10.1]: https://github.com/Freaky/Compactor/releases/tag/v0.10.1
 [#6]: https://github.com/Freaky/Compactor/issues/6
-[#8]: https://github.com/Freaky/Compactor/pull/8
+[#8]: https://github.com/Freaky/Compactor/issues/8
 [#9]: https://github.com/Freaky/Compactor/pull/9
 [#10]: https://github.com/Freaky/Compactor/pull/10
 [#11]: https://github.com/Freaky/Compactor/pull/11
