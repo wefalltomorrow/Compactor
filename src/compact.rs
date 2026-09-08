@@ -17,7 +17,7 @@ use winapi::shared::winerror::{HRESULT_CODE, SUCCEEDED};
 use winapi::um::ioapiset::DeviceIoControl;
 use winapi::um::winioctl::{FSCTL_DELETE_EXTERNAL_BACKING, FSCTL_SET_EXTERNAL_BACKING};
 use winapi::um::winnt::{
-    FILE_READ_DATA, FILE_WRITE_ATTRIBUTES, HANDLE, HRESULT, LPCWSTR,
+    FILE_READ_DATA, FILE_SHARE_READ, FILE_WRITE_ATTRIBUTES, HANDLE, HRESULT, LPCWSTR,
 };
 use winapi::um::winver::{GetFileVersionInfoA, GetFileVersionInfoSizeA, VerQueryValueA};
 
@@ -113,7 +113,7 @@ pub enum Compression {
 
 impl Default for Compression {
     fn default() -> Self {
-        Compression::Xpress8k
+        Compression::Lzx
     }
 }
 
@@ -274,6 +274,7 @@ unsafe fn as_byte_slice<T: Sized + Copy>(p: &T) -> &[u8] {
 fn open_for_wof<P: AsRef<Path>>(path: P) -> io::Result<std::fs::File> {
     std::fs::OpenOptions::new()
         .access_mode(FILE_READ_DATA | FILE_WRITE_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ)
         .open(path)
 }
 
