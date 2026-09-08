@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## [0.11.4] - 2026-09-08
+
+### Changed
+
+- Rework the Settings page into clear Exclusions, Compression, and Display panels.
+- Use a responsive two-column settings layout that collapses to one column on narrower windows.
+- Keep labels, controls, and help text aligned, with shorter worker/thread guidance beneath the relevant controls.
+
+### Fixed
+
+- Prevent Settings controls and help text from running into or overlapping each other at common window sizes and display scaling levels.
+
 ## [0.11.3] - 2026-09-08
 
 ### Added
@@ -142,17 +154,14 @@
 
 - Tests ([#11])
 
-### Removed
-
-- WofUtil.dll version check ([#6])
-
 ## [0.7.1] - 2019-07-17
 
 ### Added
 
 - Initial release
 
-[Unreleased]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.3...HEAD
+[Unreleased]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.4...HEAD
+[0.11.4]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.3...v0.11.4
 [0.11.3]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/wefalltomorrow/Compactor/releases/tag/v0.11.2
 [0.11.1]: https://github.com/wefalltomorrow/Compactor/releases/tag/v0.11.1
@@ -163,7 +172,7 @@
 [0.10.0]: https://github.com/Freaky/Compactor/releases/tag/v0.10.0
 [0.10.1]: https://github.com/Freaky/Compactor/releases/tag/v0.10.1
 [#6]: https://github.com/Freaky/Compactor/issues/6
-[#8]: https://github.com/Freaky/Compactor/issues/8
+[#8]: https://github.com/Freaky/Compactor/pull/8
 [#9]: https://github.com/Freaky/Compactor/pull/9
 [#10]: https://github.com/Freaky/Compactor/pull/10
 [#11]: https://github.com/Freaky/Compactor/pull/11
