@@ -81,6 +81,10 @@ pub enum GuiResponse {
         status: String,
         pct: Option<f32>,
     },
+    Error {
+        title: String,
+        message: String,
+    },
     FolderSummary {
         info: FolderSummary,
     },
@@ -151,6 +155,13 @@ impl<T> GuiWrapper<T> {
         self.send(&GuiResponse::Status {
             status: msg.as_ref().to_owned(),
             pct: val,
+        });
+    }
+
+    pub fn error<TITLE: AsRef<str>, MESSAGE: AsRef<str>>(&self, title: TITLE, message: MESSAGE) {
+        self.send(&GuiResponse::Error {
+            title: title.as_ref().to_owned(),
+            message: message.as_ref().to_owned(),
         });
     }
 
