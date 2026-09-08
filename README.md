@@ -14,10 +14,10 @@ This repository is a maintained fork of [Freaky/Compactor](https://github.com/Fr
 - Configurable minimum estimated savings threshold, defaulting to 1%
 - Estimated post-compression size and additional savings during analysis
 - Storage-aware multithreaded analysis and compression on SSDs
-- Conservative physical-core-aware LZX concurrency
+- Conservative physical-core-aware LZX Auto concurrency with manual override
 - Single-threaded HDD operation by default
 - HDD analysis sampling designed to reduce seek overhead
-- Compression workers run below normal priority so the desktop remains responsive
+- Configurable compression/decompression worker priority, defaulting to Below Normal
 - The system is kept awake during compression/decompression while the display may still turn off
 - Local-NTFS target validation and protection for Windows-managed paths
 - DirectStorage runtime detection with a warning before compression
@@ -34,13 +34,16 @@ This repository is a maintained fork of [Freaky/Compactor](https://github.com/Fr
 - Compression: `LZX`
 - Minimum estimated savings: `1%`
 - Maximum threads: `Auto`
+- Compression priority: `Below Normal`
 - HDDs only use 1 thread: enabled
 - Excluded paths:
   - `*:\\Windows*`
   - `*:\\System Volume Information*`
   - `*:\\$*`
 
-`Auto` is storage- and workload-aware. On SSDs it uses up to eight workers for analysis. XPRESS compression can use up to 16 logical-CPU workers, while LZX is deliberately limited to one worker on CPUs with four or fewer physical cores and at most two workers on larger CPUs because each LZX operation is already internally multithreaded. HDDs use one worker by default to avoid seek thrashing, and unknown storage is handled conservatively with one worker. A manual limit from 1 to 16 can be set in Settings; the LZX safety cap still applies. Compression reuses a valid analysis estimate when the file has not changed, avoiding duplicate sampling before WOF compression.
+`Auto` is storage- and workload-aware. On SSDs it uses up to eight workers for analysis. XPRESS compression can use up to 16 logical-CPU workers. LZX Auto uses one outer worker on CPUs with four or fewer physical cores and at most two on larger CPUs because LZX WOF operations can be CPU-intensive. A manual limit from 1 to 16 is treated as an explicit override and is respected for LZX as well. HDDs still use one worker by default when the HDD safeguard is enabled, and unknown storage is handled conservatively with one worker. Compression reuses a valid analysis estimate when the file has not changed, avoiding duplicate sampling before WOF compression.
+
+Compression/decompression worker priority can be set to Lowest, Below Normal, Normal, Above Normal, or Highest. Only the worker threads are affected; the GUI and analysis threads remain at normal priority. Below Normal is the default so idle CPU capacity can still be used while foreground work gets preference when the system is busy.
 
 File extensions are not used to decide whether a file should be compressed. Eligible files are sampled and compared against the configured savings threshold.
 
@@ -55,7 +58,7 @@ Compactor is portable and does not require an installer or background service.
 1. Choose a folder.
 2. Wait for analysis to complete.
 3. Review current disk usage and estimated savings.
-4. Change the compression mode, savings threshold, or thread limit in Settings if required.
+4. Change the compression mode, savings threshold, thread limit, or worker priority in Settings if required.
 5. Select Compress.
 
 Use Decompress to remove WOF backing from files previously compressed with Compactor. After analysis, select View beside the compressed count to browse folders containing WOF-compressed files inside Compactor. The viewer includes path filtering and pagination for large scans.
@@ -90,8 +93,8 @@ This fork includes the following changes:
 - Configurable savings thresholds
 - Estimated post-compression size and savings in the GUI
 - Actual NTFS cluster-size-aware eligibility and projected allocation
-- LZX as the default compression mode with a conservative one-or-two-worker outer concurrency cap
-- Below-normal compression worker priority
+- LZX as the default compression mode with a conservative one-or-two-worker Auto policy and manual override
+- Configurable compression/decompression worker priority, defaulting to Below Normal
 - System-sleep prevention during compression/decompression without forcing the display awake
 - Stronger local-NTFS and Windows-managed-path target validation
 - DirectStorage runtime warning
@@ -133,7 +136,7 @@ WOF compression is applied through [`FSCTL_SET_EXTERNAL_BACKING`](https://learn.
 
 Compressibility sampling uses Thomas Hurst's [compresstimator](https://github.com/Freaky/compresstimator) project. SSD analysis uses distributed sampling, while HDD analysis uses a small number of contiguous sample windows to reduce seek overhead. Estimates are sampling results and are not exact predictions of final WOF size; the displayed projection is also adjusted for the selected WOF algorithm and rounded to the target volume's NTFS cluster size.
 
-Windows storage-property queries are used to distinguish storage with and without seek penalties. If storage type cannot be determined, Compactor uses one worker thread. Windows processor-topology information is used only to choose the conservative LZX outer-worker cap.
+Windows storage-property queries are used to distinguish storage with and without seek penalties. If storage type cannot be determined, Compactor uses one worker thread. Windows processor-topology information is used to choose the conservative LZX Auto worker count; explicit manual thread limits override that Auto policy.
 
 ## Credits
 

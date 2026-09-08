@@ -7,12 +7,17 @@ use crossbeam_channel::{Receiver, Sender};
 use filetime::FileTime;
 use fs2::FileExt;
 use winapi::um::processthreadsapi::{GetCurrentThread, SetThreadPriority};
-use winapi::um::winbase::THREAD_PRIORITY_BELOW_NORMAL;
+use winapi::um::winbase::{
+    THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_BELOW_NORMAL, THREAD_PRIORITY_HIGHEST,
+    THREAD_PRIORITY_LOWEST, THREAD_PRIORITY_NORMAL,
+};
 use winapi::um::winnt::{FILE_READ_DATA, FILE_SHARE_READ, FILE_WRITE_ATTRIBUTES};
 
 use crate::background::Background;
 use crate::background::ControlToken;
 use crate::compact::{self, Compression};
+use crate::config::CompressionPriority;
+use crate::persistence::config;
 
 #[derive(Debug, Clone)]
 pub struct CompressionJob {
@@ -44,6 +49,16 @@ impl BackgroundCompactor {
             files_in,
             files_out,
         }
+    }
+}
+
+fn thread_priority_value(priority: CompressionPriority) -> i32 {
+    match priority {
+        CompressionPriority::Lowest => THREAD_PRIORITY_LOWEST,
+        CompressionPriority::BelowNormal => THREAD_PRIORITY_BELOW_NORMAL,
+        CompressionPriority::Normal => THREAD_PRIORITY_NORMAL,
+        CompressionPriority::AboveNormal => THREAD_PRIORITY_ABOVE_NORMAL,
+        CompressionPriority::Highest => THREAD_PRIORITY_HIGHEST,
     }
 }
 
@@ -114,11 +129,12 @@ impl Background for BackgroundCompactor {
     type Status = ();
 
     fn run(self, control: &ControlToken<Self::Status>) -> Self::Output {
-        // Compression is deliberately background-friendly. WOF/LZX can be CPU
-        // intensive, so lower only these worker threads rather than the GUI or
-        // analysis thread. Failure to change priority is non-fatal.
+        // Apply priority only to the compression/decompression worker. The GUI
+        // and analysis threads keep their normal scheduling priority. Failure
+        // to change the Windows thread priority is non-fatal.
+        let priority = config().read().unwrap().current().compression_priority;
         unsafe {
-            let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+            let _ = SetThreadPriority(GetCurrentThread(), thread_priority_value(priority));
         }
 
         for job in &self.files_in {
@@ -161,4 +177,22 @@ fn invalid_estimate_is_not_reused() {
     };
 
     assert_eq!(None, reuse_estimate(&job, 8192, 1234));
+}
+
+#[test]
+fn compression_priority_maps_to_safe_windows_levels() {
+    assert_eq!(THREAD_PRIORITY_LOWEST, thread_priority_value(CompressionPriority::Lowest));
+    assert_eq!(
+        THREAD_PRIORITY_BELOW_NORMAL,
+        thread_priority_value(CompressionPriority::BelowNormal)
+    );
+    assert_eq!(THREAD_PRIORITY_NORMAL, thread_priority_value(CompressionPriority::Normal));
+    assert_eq!(
+        THREAD_PRIORITY_ABOVE_NORMAL,
+        thread_priority_value(CompressionPriority::AboveNormal)
+    );
+    assert_eq!(
+        THREAD_PRIORITY_HIGHEST,
+        thread_priority_value(CompressionPriority::Highest)
+    );
 }

@@ -25,6 +25,7 @@ pub enum GuiRequest {
         min_savings_percent: f32,
         max_threads: usize,
         hdd_single_thread: bool,
+        compression_priority: String,
         excludes: String,
     },
     ResetConfig,
@@ -72,6 +73,7 @@ pub enum GuiResponse {
         min_savings_percent: f32,
         max_threads: usize,
         hdd_single_thread: bool,
+        compression_priority: String,
         excludes: String,
     },
     Folder {
@@ -143,6 +145,7 @@ impl<T> GuiWrapper<T> {
             min_savings_percent: s.min_savings_percent,
             max_threads: s.max_threads,
             hdd_single_thread: s.hdd_single_thread,
+            compression_priority: s.compression_priority.to_string(),
             excludes: s.excludes.join("\n"),
         });
     }
@@ -254,6 +257,7 @@ pub fn spawn_gui() {
                     min_savings_percent,
                     max_threads,
                     hdd_single_thread,
+                    compression_priority,
                     excludes,
                 }) => {
                     let s = Config {
@@ -262,6 +266,7 @@ pub fn spawn_gui() {
                         min_savings_percent,
                         max_threads,
                         hdd_single_thread,
+                        compression_priority: compression_priority.parse().unwrap_or_default(),
                         excludes: excludes.split('\n').map(str::to_owned).collect(),
                     };
 
@@ -280,6 +285,7 @@ pub fn spawn_gui() {
                                 min_savings_percent: s.min_savings_percent,
                                 max_threads: s.max_threads,
                                 hdd_single_thread: s.hdd_single_thread,
+                                compression_priority: s.compression_priority.to_string(),
                                 excludes: s.excludes.join("\n"),
                             },
                         );
@@ -306,6 +312,7 @@ pub fn spawn_gui() {
                             min_savings_percent: s.min_savings_percent,
                             max_threads: s.max_threads,
                             hdd_single_thread: s.hdd_single_thread,
+                            compression_priority: s.compression_priority.to_string(),
                             excludes: s.excludes.join("\n"),
                         },
                     );

@@ -9,11 +9,12 @@
 - Warn when a selected folder contains the DirectStorage runtime (`dstorage.dll` or `dstoragecore.dll`).
 - Keep the system awake during compression and decompression without forcing the display to remain on.
 - Detect the target NTFS cluster size for compression eligibility and projected on-disk allocation.
+- Add configurable compression/decompression worker priority: Lowest, Below Normal, Normal, Above Normal, or Highest. Below Normal is the default.
 
 ### Changed
 
-- LZX outer concurrency is now deliberately conservative: one worker on CPUs with four or fewer physical cores and at most two workers on larger CPUs. XPRESS modes can still scale to the configured worker limit.
-- Compression workers run at below-normal thread priority so intensive WOF operations are less disruptive to the desktop.
+- LZX Auto concurrency is deliberately conservative: one worker on CPUs with four or fewer physical cores and at most two workers on larger CPUs. An explicit manual thread limit overrides the LZX Auto policy; the HDD single-thread safeguard still applies when enabled.
+- Worker priority applies only to compression/decompression threads; the GUI and analysis threads remain at normal priority.
 - Analysis uses bounded 4096-file estimation batches instead of allowing the complete candidate set to accumulate before parallel estimation.
 - Skipped files retain counts and size totals without retaining every skipped path, reducing memory use on very large scans.
 - Displayed projected savings are adjusted for the selected WOF algorithm and rounded to the target volume's cluster size while the eligibility decision continues to use the raw sampled compressibility result.

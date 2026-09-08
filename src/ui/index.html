@@ -116,7 +116,17 @@
       </label>
 
       <label>Maximum threads
-        <input id="Max_Threads" name="Max_Threads" type="number" min="0" max="16" step="1" value="0" style="width: 70px"> <small title="Auto uses up to 8 analysis workers and up to 16 XPRESS compression workers on SSDs. LZX compression is capped at 1-2 workers; HDDs remain single-threaded by default.">0 = Auto (hardware-aware)</small>
+        <input id="Max_Threads" name="Max_Threads" type="number" min="0" max="16" step="1" value="0" style="width: 70px"> <small title="Auto uses up to 8 analysis workers and up to 16 XPRESS compression workers on SSDs. LZX Auto uses a conservative 1-2 workers. A manual limit is respected for LZX too; the HDD single-thread safeguard still applies.">0 = Auto (hardware-aware)</small>
+      </label>
+
+      <label>Compression priority
+        <select id="Compression_Priority" name="Compression_Priority">
+          <option value="Lowest">Lowest</option>
+          <option value="BelowNormal">Below Normal (default)</option>
+          <option value="Normal">Normal</option>
+          <option value="AboveNormal">Above Normal</option>
+          <option value="Highest">Highest</option>
+        </select> <small title="Applies only to compression/decompression worker threads. Analysis and the GUI remain at normal priority.">worker threads only</small>
       </label>
 
       <label>

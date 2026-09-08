@@ -212,6 +212,7 @@ var Response = (function() {
 					Gui.set_compression(msg.compression);
 					Gui.set_min_savings(msg.min_savings_percent);
 					Gui.set_max_threads(msg.max_threads);
+					Gui.set_compression_priority(msg.compression_priority);
 					Gui.set_hdd_single_thread(msg.hdd_single_thread);
 					Gui.set_excludes(msg.excludes);
 					break;
@@ -290,6 +291,7 @@ var Gui = (function() {
 					compression: $("#Compression_Mode").val(),
 					min_savings_percent: minSavings,
 					max_threads: maxThreads,
+					compression_priority: $("#Compression_Priority").val(),
 					hdd_single_thread: $("#HDD_Single_Thread").prop("checked"),
 					excludes: $("#Excludes").val()
 				});
@@ -409,6 +411,10 @@ var Gui = (function() {
 
 		set_max_threads: function(threads) {
 			$("#Max_Threads").val(threads);
+		},
+
+		set_compression_priority: function(priority) {
+			$("#Compression_Priority").val(priority);
 		},
 
 		set_hdd_single_thread: function(enabled) {

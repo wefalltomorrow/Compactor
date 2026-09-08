@@ -1,5 +1,7 @@
+use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde_derive::{Deserialize, Serialize};
@@ -18,6 +20,52 @@ fn default_hdd_single_thread() -> bool {
     true
 }
 
+fn default_compression_priority() -> CompressionPriority {
+    CompressionPriority::BelowNormal
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CompressionPriority {
+    Lowest,
+    BelowNormal,
+    Normal,
+    AboveNormal,
+    Highest,
+}
+
+impl Default for CompressionPriority {
+    fn default() -> Self {
+        Self::BelowNormal
+    }
+}
+
+impl fmt::Display for CompressionPriority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Lowest => "Lowest",
+            Self::BelowNormal => "BelowNormal",
+            Self::Normal => "Normal",
+            Self::AboveNormal => "AboveNormal",
+            Self::Highest => "Highest",
+        })
+    }
+}
+
+impl FromStr for CompressionPriority {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "lowest" => Ok(Self::Lowest),
+            "belownormal" | "below normal" | "below-normal" => Ok(Self::BelowNormal),
+            "normal" => Ok(Self::Normal),
+            "abovenormal" | "above normal" | "above-normal" => Ok(Self::AboveNormal),
+            "highest" => Ok(Self::Highest),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ConfigFile {
     backing: Option<PathBuf>,
@@ -34,6 +82,8 @@ pub struct Config {
     pub max_threads: usize,
     #[serde(default = "default_hdd_single_thread")]
     pub hdd_single_thread: bool,
+    #[serde(default = "default_compression_priority")]
+    pub compression_priority: CompressionPriority,
     pub excludes: Vec<String>,
 }
 
@@ -45,6 +95,7 @@ impl Default for Config {
             min_savings_percent: default_min_savings_percent(),
             max_threads: default_max_threads(),
             hdd_single_thread: default_hdd_single_thread(),
+            compression_priority: default_compression_priority(),
             excludes: vec![
                 "*:\\Windows*",
                 "*:\\System Volume Information*",
@@ -137,6 +188,7 @@ fn test_config() {
     assert_eq!(s.min_savings_percent, 1.0);
     assert_eq!(s.max_threads, 0);
     assert!(s.hdd_single_thread);
+    assert_eq!(s.compression_priority, CompressionPriority::BelowNormal);
     assert!((s.ratio_limit() - 0.99).abs() < f32::EPSILON);
 
     let gs = s.globset().unwrap();
@@ -149,6 +201,19 @@ fn test_config() {
     assert!(!gs.is_match("C:\\foo\\archive.rar"));
     assert!(!gs.is_match("C:\\foo\\data.lz4"));
     assert!(!gs.is_match("C:\\foo\\PHOTO.JPG"));
+}
+
+#[test]
+fn compression_priority_parses_ui_values() {
+    assert_eq!(
+        CompressionPriority::BelowNormal,
+        "BelowNormal".parse::<CompressionPriority>().unwrap()
+    );
+    assert_eq!(
+        CompressionPriority::AboveNormal,
+        "Above Normal".parse::<CompressionPriority>().unwrap()
+    );
+    assert!("Realtime".parse::<CompressionPriority>().is_err());
 }
 
 #[test]

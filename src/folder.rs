@@ -576,7 +576,10 @@ fn compression_worker_count(
         AUTO_MAX_COMPRESSION_THREADS,
     );
 
-    if compression == Compression::Lzx {
+    // Auto is conservative for LZX because a single WOF/LZX operation can be
+    // CPU-heavy. An explicit manual limit is treated as an intentional override
+    // so high-end systems can trade responsiveness for throughput if desired.
+    if compression == Compression::Lzx && max_threads == 0 {
         if workers <= 1 || physical_cpus <= 4 {
             1
         } else {
@@ -1036,7 +1039,7 @@ fn analysis_workers_are_storage_aware() {
 }
 
 #[test]
-fn lzx_workers_are_conservatively_capped() {
+fn lzx_auto_is_conservatively_capped_and_manual_is_respected() {
     assert_eq!(
         1,
         compression_worker_count(8, 4, Some(false), Compression::Lzx, 0, true)
@@ -1056,6 +1059,10 @@ fn lzx_workers_are_conservatively_capped() {
     assert_eq!(
         1,
         compression_worker_count(16, 8, Some(false), Compression::Lzx, 1, true)
+    );
+    assert_eq!(
+        8,
+        compression_worker_count(16, 8, Some(false), Compression::Lzx, 8, true)
     );
     assert_eq!(
         16,
