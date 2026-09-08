@@ -133,6 +133,7 @@ var Util = (function() {
 			for (var i = a; i < b; i += step) {
 				arr.push(i);
 			}
+
 			return arr;
 		}
 	};
@@ -225,6 +226,10 @@ var Response = (function() {
 
 				case "Status":
 					Gui.set_status(msg.status, msg.pct);
+					break;
+
+				case "Error":
+					window.alert(msg.title + "\n\n" + msg.message);
 					break;
 
 				case "Paused":
@@ -501,6 +506,7 @@ var Gui = (function() {
 			Gui.set_folder_summary({
 				logical_size: 0,
 				physical_size: 0,
+				direct_storage: false,
 				compressed: {count: 0, logical_size: 0, physical_size: 0, estimated_physical_size: 0},
 				compressible: {count: 0, logical_size: 0, physical_size: 0, estimated_physical_size: 0},
 				skipped: {count: 0, logical_size: 0, physical_size: 0, estimated_physical_size: 0}
@@ -518,11 +524,12 @@ var Gui = (function() {
 				$("#Compress_Ratio").text("1.00");
 			}
 
-			if (data.logical_size > 0) {
-				var total = data.logical_size;
-				$("#Compressed_Size").text(Util.bytes_to_human(data.compressed.physical_size));
-				$("#Compressible_Size").text(Util.bytes_to_human(data.compressible.physical_size));
-				$("#Skipped_Size").text(Util.bytes_to_human(data.skipped.physical_size));
+			$("#Compressed_Size").text(Util.bytes_to_human(data.compressed.physical_size));
+			$("#Compressible_Size").text(Util.bytes_to_human(data.compressible.physical_size));
+			$("#Skipped_Size").text(Util.bytes_to_human(data.skipped.physical_size));
+
+			if (data.physical_size > 0) {
+				var total = data.physical_size;
 				document.getElementById("Breakdown_Compressed").style.width = "" + 100 * (data.compressed.physical_size / total).toFixed(2) + "%";
 				document.getElementById("Breakdown_Compressible").style.width = "" + 100 * (data.compressible.physical_size / total).toFixed(2) + "%";
 				document.getElementById("Breakdown_Skipped").style.width = "" + 100 * (data.skipped.physical_size / total).toFixed(2) + "%";
@@ -542,6 +549,7 @@ var Gui = (function() {
 			$("#File_Count_Compressed").text(Util.format_number(data.compressed.count, 0));
 			$("#File_Count_Compressible").text(Util.format_number(data.compressible.count, 0));
 			$("#File_Count_Skipped").text(Util.format_number(data.skipped.count, 0));
+			$("#DirectStorage_Warning").toggle(!!data.direct_storage);
 		},
 
 		analysis_complete: function() {
