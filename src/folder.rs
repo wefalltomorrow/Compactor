@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
+use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::os::windows::io::AsRawHandle;
 use std::path::{Component, Path, PathBuf, Prefix};
@@ -14,6 +15,7 @@ use serde_derive::Serialize;
 use walkdir::WalkDir;
 use winapi::shared::minwindef::DWORD;
 use winapi::shared::ntdef::PVOID;
+use winapi::um::fileapi::{GetDiskFreeSpaceW, GetVolumeInformationW};
 use winapi::um::ioapiset::DeviceIoControl;
 use winapi::um::winioctl::{
     IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, StorageDeviceSeekPenaltyProperty,
@@ -27,14 +29,18 @@ use winapi::um::winnt::{
 };
 
 use crate::background::{Background, ControlToken};
+use crate::compact::Compression;
 use crate::persistence::{incompressible_key, pathdb};
 
 const AUTO_MAX_ANALYSIS_THREADS: usize = 8;
 const AUTO_MAX_COMPRESSION_THREADS: usize = 16;
+const AUTO_MAX_LZX_THREADS: usize = 2;
 const MAX_CONFIGURED_THREADS: usize = 16;
+const ESTIMATE_BATCH_FILES: usize = 4096;
 const HDD_SAMPLE_WINDOWS: u64 = 4;
 const HDD_SAMPLE_CHUNK: usize = 128 * 1024;
 const ESTIMATOR_BLOCK_SIZE: usize = 8192;
+const FALLBACK_CLUSTER_SIZE: u64 = 4096;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FileInfo {
@@ -51,6 +57,7 @@ pub struct FileInfo {
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct GroupInfo {
     pub files: VecDeque<FileInfo>,
+    pub count: usize,
     pub logical_size: u64,
     pub physical_size: u64,
     pub estimated_physical_size: u64,
@@ -64,6 +71,7 @@ pub struct FolderInfo {
     pub compressible: GroupInfo,
     pub compressed: GroupInfo,
     pub skipped: GroupInfo,
+    pub direct_storage: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -73,6 +81,7 @@ pub struct FolderSummary {
     pub compressible: GroupSummary,
     pub compressed: GroupSummary,
     pub skipped: GroupSummary,
+    pub direct_storage: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -99,6 +108,7 @@ impl FolderInfo {
             compressible: GroupInfo::default(),
             compressed: GroupInfo::default(),
             skipped: GroupInfo::default(),
+            direct_storage: false,
         }
     }
 
@@ -109,14 +119,15 @@ impl FolderInfo {
             compressible: self.compressible.summary(),
             compressed: self.compressed.summary(),
             skipped: self.skipped.summary(),
+            direct_storage: self.direct_storage,
         }
     }
 
     pub fn len(&self, kind: FileKind) -> usize {
         match kind {
-            FileKind::Compressible => self.compressible.files.len(),
-            FileKind::Compressed => self.compressed.files.len(),
-            FileKind::Skipped => self.skipped.files.len(),
+            FileKind::Compressible => self.compressible.count,
+            FileKind::Compressed => self.compressed.count,
+            FileKind::Skipped => self.skipped.count,
         }
     }
 
@@ -124,7 +135,7 @@ impl FolderInfo {
         let ret = match kind {
             FileKind::Compressible => self.compressible.pop(),
             FileKind::Compressed => self.compressed.pop(),
-            FileKind::Skipped => self.skipped.pop(),
+            FileKind::Skipped => None,
         };
 
         if let Some(fi) = ret {
@@ -141,9 +152,12 @@ impl FolderInfo {
         self.physical_size = self.physical_size.saturating_add(fi.physical_size);
 
         match kind {
-            FileKind::Compressible => self.compressible.push(fi),
-            FileKind::Compressed => self.compressed.push(fi),
-            FileKind::Skipped => self.skipped.push(fi),
+            FileKind::Compressible => self.compressible.push(fi, true),
+            FileKind::Compressed => self.compressed.push(fi, true),
+            // Skipped paths are not needed for any operation or viewer. Keeping
+            // only their counters/totals prevents huge excluded trees from
+            // consuming memory merely to remember every filename.
+            FileKind::Skipped => self.skipped.push(fi, false),
         }
     }
 }
@@ -151,7 +165,7 @@ impl FolderInfo {
 impl GroupInfo {
     pub fn summary(&self) -> GroupSummary {
         GroupSummary {
-            count: self.files.len(),
+            count: self.count,
             logical_size: self.logical_size,
             physical_size: self.physical_size,
             estimated_physical_size: self.estimated_physical_size,
@@ -162,6 +176,7 @@ impl GroupInfo {
         let ret = self.files.pop_front();
 
         if let Some(fi) = ret {
+            self.count = self.count.saturating_sub(1);
             self.logical_size = self.logical_size.saturating_sub(fi.logical_size);
             self.physical_size = self.physical_size.saturating_sub(fi.physical_size);
             self.estimated_physical_size = self
@@ -173,13 +188,16 @@ impl GroupInfo {
         }
     }
 
-    fn push(&mut self, fi: FileInfo) {
+    fn push(&mut self, fi: FileInfo, retain: bool) {
+        self.count = self.count.saturating_add(1);
         self.logical_size = self.logical_size.saturating_add(fi.logical_size);
         self.physical_size = self.physical_size.saturating_add(fi.physical_size);
         self.estimated_physical_size = self
             .estimated_physical_size
             .saturating_add(fi.estimated_physical_size);
-        self.files.push_back(fi);
+        if retain {
+            self.files.push_back(fi);
+        }
     }
 }
 
@@ -188,6 +206,7 @@ pub struct FolderScan {
     path: PathBuf,
     excludes: GlobSet,
     ratio_limit: f32,
+    compression: Compression,
     max_threads: usize,
     hdd_single_thread: bool,
 }
@@ -197,6 +216,7 @@ impl FolderScan {
         path: P,
         excludes: GlobSet,
         ratio_limit: f32,
+        compression: Compression,
         max_threads: usize,
         hdd_single_thread: bool,
     ) -> Self {
@@ -204,6 +224,7 @@ impl FolderScan {
             path: path.as_ref().to_path_buf(),
             excludes,
             ratio_limit,
+            compression,
             max_threads,
             hdd_single_thread,
         }
@@ -223,12 +244,193 @@ struct DeviceSeekPenaltyDescriptor {
     incurs_seek_penalty: BOOLEAN,
 }
 
-fn estimate_physical_size(logical_size: u64, ratio: f32) -> u64 {
-    if !ratio.is_finite() {
-        return logical_size;
+fn wide_null(path: &Path) -> Vec<u16> {
+    path.as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+fn volume_root_path(path: &Path) -> Option<PathBuf> {
+    match path.components().next()? {
+        Component::Prefix(prefix) => match prefix.kind() {
+            Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
+                Some(PathBuf::from(format!(r"{}:\", letter as char)))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn normalized_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_ascii_lowercase()
+}
+
+fn path_is_same_or_child(path: &Path, parent: &Path) -> bool {
+    let path = normalized_path(path);
+    let parent = normalized_path(parent);
+    path == parent
+        || path
+            .strip_prefix(&parent)
+            .map(|rest| rest.starts_with('\\'))
+            .unwrap_or(false)
+}
+
+fn volume_filesystem(path: &Path) -> io::Result<String> {
+    let root = volume_root_path(path)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a local drive path"))?;
+    let root = wide_null(&root);
+    let mut filesystem = [0u16; 32];
+
+    let ret = unsafe {
+        GetVolumeInformationW(
+            root.as_ptr(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            filesystem.as_mut_ptr(),
+            filesystem.len() as DWORD,
+        )
+    };
+
+    if ret == 0 {
+        return Err(io::Error::last_os_error());
     }
 
-    ((logical_size as f64) * (ratio.clamp(0.0, 1.0) as f64)).round() as u64
+    let len = filesystem
+        .iter()
+        .position(|&value| value == 0)
+        .unwrap_or(filesystem.len());
+    Ok(String::from_utf16_lossy(&filesystem[..len]))
+}
+
+fn cluster_size_for_path(path: &Path) -> u64 {
+    let Some(root) = volume_root_path(path) else {
+        return FALLBACK_CLUSTER_SIZE;
+    };
+    let root = wide_null(&root);
+    let mut sectors_per_cluster = 0u32;
+    let mut bytes_per_sector = 0u32;
+    let mut free_clusters = 0u32;
+    let mut total_clusters = 0u32;
+
+    let ret = unsafe {
+        GetDiskFreeSpaceW(
+            root.as_ptr(),
+            &mut sectors_per_cluster,
+            &mut bytes_per_sector,
+            &mut free_clusters,
+            &mut total_clusters,
+        )
+    };
+
+    if ret == 0 {
+        FALLBACK_CLUSTER_SIZE
+    } else {
+        (sectors_per_cluster as u64)
+            .saturating_mul(bytes_per_sector as u64)
+            .max(1)
+    }
+}
+
+pub fn validate_target_path(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err("The selected folder no longer exists.".to_string());
+    }
+    if !path.is_dir() {
+        return Err("The selected path is not a folder.".to_string());
+    }
+
+    let root = volume_root_path(path).ok_or_else(|| {
+        "Only local drive folders are supported. Network/UNC paths are not valid WOF targets."
+            .to_string()
+    })?;
+
+    if normalized_path(path) == normalized_path(&root) {
+        return Err("Select a folder rather than an entire drive root.".to_string());
+    }
+
+    let filesystem = volume_filesystem(path)
+        .map_err(|err| format!("Unable to query the target filesystem: {}", err))?;
+    if !filesystem.eq_ignore_ascii_case("NTFS") {
+        return Err(format!(
+            "Windows WOF compression requires NTFS. This folder is on {}.",
+            if filesystem.is_empty() {
+                "an unknown filesystem"
+            } else {
+                &filesystem
+            }
+        ));
+    }
+
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        if path_is_same_or_child(path, &PathBuf::from(system_root)) {
+            return Err("The active Windows directory is protected from compression.".to_string());
+        }
+    }
+
+    let root_normalized = normalized_path(&root);
+    let path_normalized = normalized_path(path);
+    if let Some(relative) = path_normalized
+        .strip_prefix(&root_normalized)
+        .map(|value| value.trim_start_matches('\\'))
+    {
+        let first = relative.split('\\').next().unwrap_or_default();
+        if first.eq_ignore_ascii_case("system volume information") || first.starts_with('$') {
+            return Err("The selected folder is a protected Windows-managed path.".to_string());
+        }
+    }
+
+    if let Ok(metadata) = std::fs::metadata(path) {
+        if metadata.file_attributes() & FILE_ATTRIBUTE_COMPRESSED != 0 {
+            return Err(
+                "The selected folder uses legacy NTFS (LZNT1) compression. Disable 'Compress contents to save disk space' on the folder before using WOF compression."
+                    .to_string(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn projection_factor(compression: Compression) -> f32 {
+    match compression {
+        Compression::Xpress4k => 1.05,
+        Compression::Xpress8k => 1.02,
+        Compression::Xpress16k => 1.00,
+        Compression::Lzx => 0.90,
+    }
+}
+
+fn round_up_to_cluster(size: u64, cluster_size: u64) -> u64 {
+    let cluster_size = cluster_size.max(1);
+    if size == 0 {
+        0
+    } else {
+        size.saturating_add(cluster_size - 1) / cluster_size * cluster_size
+    }
+}
+
+fn estimate_physical_size(
+    logical_size: u64,
+    ratio: f32,
+    compression: Compression,
+    cluster_size: u64,
+    current_physical_size: u64,
+) -> u64 {
+    if !ratio.is_finite() {
+        return current_physical_size;
+    }
+
+    let adjusted_ratio = (ratio.clamp(0.0, 1.0) * projection_factor(compression)).clamp(0.0, 1.0);
+    let estimated = ((logical_size as f64) * adjusted_ratio as f64).round() as u64;
+    round_up_to_cluster(estimated, cluster_size).min(current_physical_size)
 }
 
 fn volume_device_path(path: &Path) -> Option<PathBuf> {
@@ -307,20 +509,47 @@ fn worker_count_for_storage(
     }
 }
 
+fn compression_worker_count(
+    cpus: usize,
+    incurs_seek_penalty: Option<bool>,
+    compression: Compression,
+    max_threads: usize,
+    hdd_single_thread: bool,
+) -> usize {
+    let workers = worker_count_for_storage(
+        cpus,
+        incurs_seek_penalty,
+        max_threads,
+        hdd_single_thread,
+        AUTO_MAX_COMPRESSION_THREADS,
+    );
+
+    if compression == Compression::Lzx {
+        if workers <= 1 || cpus <= 4 {
+            1
+        } else {
+            workers.min(AUTO_MAX_LZX_THREADS)
+        }
+    } else {
+        workers
+    }
+}
+
 pub fn compression_worker_count_for_path(
     path: &Path,
+    compression: Compression,
     max_threads: usize,
     hdd_single_thread: bool,
 ) -> usize {
     let cpus = thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1);
-    worker_count_for_storage(
+    compression_worker_count(
         cpus,
         volume_incurs_seek_penalty(path),
+        compression,
         max_threads,
         hdd_single_thread,
-        AUTO_MAX_COMPRESSION_THREADS,
     )
 }
 
@@ -385,11 +614,18 @@ fn apply_estimate(
     mut fi: FileInfo,
     result: io::Result<f32>,
     ratio_limit: f32,
+    compression: Compression,
+    cluster_size: u64,
 ) {
     match result {
         Ok(ratio) if ratio < ratio_limit => {
-            fi.estimated_physical_size =
-                estimate_physical_size(fi.logical_size, ratio).min(fi.physical_size);
+            fi.estimated_physical_size = estimate_physical_size(
+                fi.logical_size,
+                ratio,
+                compression,
+                cluster_size,
+                fi.physical_size,
+            );
             fi.estimate_valid = true;
             fi.estimated_ratio = ratio;
             ds.push(FileKind::Compressible, fi);
@@ -404,6 +640,8 @@ fn estimate_candidates(
     workers: usize,
     hdd: bool,
     ratio_limit: f32,
+    compression: Compression,
+    cluster_size: u64,
     control: &ControlToken<(PathBuf, FolderSummary)>,
     ds: &mut FolderInfo,
     last_status: &mut Instant,
@@ -468,7 +706,14 @@ fn estimate_candidates(
             Ok((fi, result)) => {
                 in_flight -= 1;
                 let status_path = fi.path.clone();
-                apply_estimate(ds, fi, result, ratio_limit);
+                apply_estimate(
+                    ds,
+                    fi,
+                    result,
+                    ratio_limit,
+                    compression,
+                    cluster_size,
+                );
 
                 if last_status.elapsed() >= Duration::from_millis(50) {
                     *last_status = Instant::now();
@@ -500,7 +745,14 @@ fn estimate_candidates(
 
     if cancelled {
         for (fi, result) in result_rx.try_iter() {
-            apply_estimate(ds, fi, result, ratio_limit);
+            apply_estimate(
+                ds,
+                fi,
+                result,
+                ratio_limit,
+                compression,
+                cluster_size,
+            );
         }
 
         for candidate in candidates {
@@ -513,6 +765,16 @@ fn estimate_candidates(
     }
 }
 
+fn is_direct_storage_runtime(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            name.eq_ignore_ascii_case("dstorage.dll")
+                || name.eq_ignore_ascii_case("dstoragecore.dll")
+        })
+        .unwrap_or(false)
+}
+
 impl Background for FolderScan {
     type Output = Result<FolderInfo, FolderInfo>;
     type Status = (PathBuf, FolderSummary);
@@ -522,6 +784,7 @@ impl Background for FolderScan {
             path,
             excludes,
             ratio_limit,
+            compression,
             max_threads,
             hdd_single_thread,
         } = self;
@@ -538,6 +801,7 @@ impl Background for FolderScan {
             AUTO_MAX_ANALYSIS_THREADS,
         );
         let is_hdd = matches!(seek_penalty, Some(true));
+        let cluster_size = cluster_size_for_path(&path);
         let mut candidates: VecDeque<EstimateCandidate> = VecDeque::new();
         let inline_estimator = if analysis_workers == 1 {
             Some(Compresstimator::with_block_size(ESTIMATOR_BLOCK_SIZE))
@@ -567,7 +831,11 @@ impl Background for FolderScan {
                 .unwrap_or_else(|_e| entry.path())
                 .to_path_buf();
 
-            let logical_size = metadata.len().max(physical);
+            if is_direct_storage_runtime(entry.path()) {
+                ds.direct_storage = true;
+            }
+
+            let logical_size = metadata.len();
             let fi = FileInfo {
                 path: shortname,
                 content_len: metadata.len(),
@@ -604,7 +872,7 @@ impl Background for FolderScan {
                 ds.push(FileKind::Skipped, fi);
             } else if fi.physical_size < fi.logical_size {
                 ds.push(FileKind::Compressed, fi);
-            } else if fi.logical_size <= 4096
+            } else if fi.content_len <= cluster_size
                 || attributes
                     & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_TEMPORARY)
                     != 0
@@ -620,12 +888,37 @@ impl Background for FolderScan {
                     is_hdd,
                     &mut inline_buffer,
                 );
-                apply_estimate(&mut ds, fi, result, ratio_limit);
+                apply_estimate(
+                    &mut ds,
+                    fi,
+                    result,
+                    ratio_limit,
+                    compression,
+                    cluster_size,
+                );
             } else {
                 candidates.push_back(EstimateCandidate {
                     file: fi,
                     content_len: metadata.len(),
                 });
+
+                if candidates.len() >= ESTIMATE_BATCH_FILES {
+                    let batch = std::mem::take(&mut candidates);
+                    if !estimate_candidates(
+                        &path,
+                        batch,
+                        analysis_workers,
+                        is_hdd,
+                        ratio_limit,
+                        compression,
+                        cluster_size,
+                        control,
+                        &mut ds,
+                        &mut last_status,
+                    ) {
+                        return Err(ds);
+                    }
+                }
             }
         }
 
@@ -638,6 +931,8 @@ impl Background for FolderScan {
                 analysis_workers,
                 is_hdd,
                 ratio_limit,
+                compression,
+                cluster_size,
                 control,
                 &mut ds,
                 &mut last_status,
@@ -687,6 +982,70 @@ fn analysis_workers_are_storage_aware() {
 }
 
 #[test]
+fn lzx_workers_are_conservatively_capped() {
+    assert_eq!(
+        1,
+        compression_worker_count(4, Some(false), Compression::Lzx, 0, true)
+    );
+    assert_eq!(
+        2,
+        compression_worker_count(16, Some(false), Compression::Lzx, 0, true)
+    );
+    assert_eq!(
+        1,
+        compression_worker_count(16, Some(true), Compression::Lzx, 0, true)
+    );
+    assert_eq!(
+        1,
+        compression_worker_count(16, Some(false), Compression::Lzx, 1, true)
+    );
+    assert_eq!(
+        16,
+        compression_worker_count(32, Some(false), Compression::Xpress8k, 0, true)
+    );
+}
+
+#[test]
+fn projection_is_algorithm_and_cluster_aware() {
+    let logical = 1024 * 1024;
+    let physical = logical;
+    let xpress = estimate_physical_size(
+        logical,
+        0.50,
+        Compression::Xpress16k,
+        4096,
+        physical,
+    );
+    let lzx = estimate_physical_size(logical, 0.50, Compression::Lzx, 4096, physical);
+
+    assert!(lzx < xpress);
+    assert_eq!(0, lzx % 4096);
+    assert_eq!(0, xpress % 4096);
+}
+
+#[test]
+fn skipped_files_keep_totals_without_retaining_paths() {
+    let mut folder = FolderInfo::new("C:\\Games");
+    folder.push(
+        FileKind::Skipped,
+        FileInfo {
+            path: PathBuf::from("skip.bin"),
+            content_len: 8192,
+            modified_time: 0,
+            estimate_valid: false,
+            estimated_ratio: 1.0,
+            logical_size: 8192,
+            physical_size: 8192,
+            estimated_physical_size: 8192,
+        },
+    );
+
+    assert_eq!(1, folder.skipped.count);
+    assert!(folder.skipped.files.is_empty());
+    assert_eq!(8192, folder.skipped.logical_size);
+}
+
+#[test]
 fn it_walks() {
     use crate::background::BackgroundHandle;
     use crate::config::Config;
@@ -697,6 +1056,7 @@ fn it_walks() {
         "C:\\Games",
         gs,
         config.ratio_limit(),
+        config.compression,
         config.max_threads,
         config.hdd_single_thread,
     );
