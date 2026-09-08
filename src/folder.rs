@@ -17,6 +17,7 @@ use winapi::shared::minwindef::DWORD;
 use winapi::shared::ntdef::PVOID;
 use winapi::um::fileapi::{GetDiskFreeSpaceW, GetVolumeInformationW};
 use winapi::um::ioapiset::DeviceIoControl;
+use winapi::um::sysinfoapi::GetLogicalProcessorInformation;
 use winapi::um::winioctl::{
     IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, StorageDeviceSeekPenaltyProperty,
     STORAGE_PROPERTY_QUERY,
@@ -25,7 +26,7 @@ use winapi::um::winnt::{
     BOOLEAN, FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_ENCRYPTED, FILE_ATTRIBUTE_OFFLINE,
     FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SPARSE_FILE,
     FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TEMPORARY, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, HANDLE,
+    FILE_SHARE_WRITE, HANDLE, RelationProcessorCore, SYSTEM_LOGICAL_PROCESSOR_INFORMATION,
 };
 
 use crate::background::{Background, ControlToken};
@@ -382,7 +383,10 @@ pub fn validate_target_path(path: &Path) -> Result<(), String> {
         .map(|value| value.trim_start_matches('\\'))
     {
         let first = relative.split('\\').next().unwrap_or_default();
-        if first.eq_ignore_ascii_case("system volume information") || first.starts_with('$') {
+        if first.eq_ignore_ascii_case("system volume information")
+            || first.eq_ignore_ascii_case("recovery")
+            || first.starts_with('$')
+        {
             return Err("The selected folder is a protected Windows-managed path.".to_string());
         }
     }
@@ -485,6 +489,53 @@ fn volume_incurs_seek_penalty(path: &Path) -> Option<bool> {
     }
 }
 
+fn physical_core_count() -> Option<usize> {
+    let entry_size = std::mem::size_of::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION>();
+    if entry_size == 0 {
+        return None;
+    }
+
+    let mut bytes: DWORD = 0;
+    unsafe {
+        // The first call is expected to fail with an insufficient-buffer result
+        // while returning the required byte count.
+        let _ = GetLogicalProcessorInformation(std::ptr::null_mut(), &mut bytes);
+    }
+    if bytes == 0 {
+        return None;
+    }
+
+    loop {
+        let capacity = ((bytes as usize + entry_size - 1) / entry_size).max(1);
+        let mut entries: Vec<SYSTEM_LOGICAL_PROCESSOR_INFORMATION> = Vec::with_capacity(capacity);
+        let mut buffer_bytes = (capacity * entry_size) as DWORD;
+
+        let ret = unsafe {
+            GetLogicalProcessorInformation(entries.as_mut_ptr(), &mut buffer_bytes)
+        };
+
+        if ret != 0 {
+            let len = (buffer_bytes as usize / entry_size).min(capacity);
+            unsafe {
+                entries.set_len(len);
+            }
+            let cores = entries
+                .iter()
+                .filter(|entry| entry.Relationship == RelationProcessorCore)
+                .count();
+            return if cores == 0 { None } else { Some(cores) };
+        }
+
+        // Processor topology can theoretically change between calls. Retry only
+        // when Windows reports that the required buffer grew; otherwise fall
+        // back to the logical count rather than blocking compression.
+        if buffer_bytes as usize <= capacity * entry_size {
+            return None;
+        }
+        bytes = buffer_bytes;
+    }
+}
+
 fn configured_thread_count(cpus: usize, max_threads: usize, auto_max_threads: usize) -> usize {
     if max_threads == 0 {
         cpus.max(1).min(auto_max_threads)
@@ -510,14 +561,15 @@ fn worker_count_for_storage(
 }
 
 fn compression_worker_count(
-    cpus: usize,
+    logical_cpus: usize,
+    physical_cpus: usize,
     incurs_seek_penalty: Option<bool>,
     compression: Compression,
     max_threads: usize,
     hdd_single_thread: bool,
 ) -> usize {
     let workers = worker_count_for_storage(
-        cpus,
+        logical_cpus,
         incurs_seek_penalty,
         max_threads,
         hdd_single_thread,
@@ -525,7 +577,7 @@ fn compression_worker_count(
     );
 
     if compression == Compression::Lzx {
-        if workers <= 1 || cpus <= 4 {
+        if workers <= 1 || physical_cpus <= 4 {
             1
         } else {
             workers.min(AUTO_MAX_LZX_THREADS)
@@ -541,11 +593,13 @@ pub fn compression_worker_count_for_path(
     max_threads: usize,
     hdd_single_thread: bool,
 ) -> usize {
-    let cpus = thread::available_parallelism()
+    let logical_cpus = thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1);
+    let physical_cpus = physical_core_count().unwrap_or(logical_cpus);
     compression_worker_count(
-        cpus,
+        logical_cpus,
+        physical_cpus,
         volume_incurs_seek_penalty(path),
         compression,
         max_threads,
@@ -985,23 +1039,27 @@ fn analysis_workers_are_storage_aware() {
 fn lzx_workers_are_conservatively_capped() {
     assert_eq!(
         1,
-        compression_worker_count(4, Some(false), Compression::Lzx, 0, true)
+        compression_worker_count(8, 4, Some(false), Compression::Lzx, 0, true)
     );
     assert_eq!(
         2,
-        compression_worker_count(16, Some(false), Compression::Lzx, 0, true)
+        compression_worker_count(8, 6, Some(false), Compression::Lzx, 0, true)
+    );
+    assert_eq!(
+        2,
+        compression_worker_count(16, 8, Some(false), Compression::Lzx, 0, true)
     );
     assert_eq!(
         1,
-        compression_worker_count(16, Some(true), Compression::Lzx, 0, true)
+        compression_worker_count(16, 8, Some(true), Compression::Lzx, 0, true)
     );
     assert_eq!(
         1,
-        compression_worker_count(16, Some(false), Compression::Lzx, 1, true)
+        compression_worker_count(16, 8, Some(false), Compression::Lzx, 1, true)
     );
     assert_eq!(
         16,
-        compression_worker_count(32, Some(false), Compression::Xpress8k, 0, true)
+        compression_worker_count(32, 16, Some(false), Compression::Xpress8k, 0, true)
     );
 }
 
