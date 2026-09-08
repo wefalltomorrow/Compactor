@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## [0.11.3] - 2026-09-08
+
+### Added
+
+- Warn when a selected folder contains the DirectStorage runtime (`dstorage.dll` or `dstoragecore.dll`).
+- Keep the system awake during compression and decompression without forcing the display to remain on.
+- Detect the target NTFS cluster size for compression eligibility and projected on-disk allocation.
+
+### Changed
+
+- LZX outer concurrency is now deliberately conservative: one worker on CPUs with four or fewer physical cores and at most two workers on larger CPUs. XPRESS modes can still scale to the configured worker limit.
+- Compression workers run at below-normal thread priority so intensive WOF operations are less disruptive to the desktop.
+- Analysis uses bounded 4096-file estimation batches instead of allowing the complete candidate set to accumulate before parallel estimation.
+- Skipped files retain counts and size totals without retaining every skipped path, reducing memory use on very large scans.
+- Displayed projected savings are adjusted for the selected WOF algorithm and rounded to the target volume's cluster size while the eligibility decision continues to use the raw sampled compressibility result.
+- Decompression results use the file's actual post-operation on-disk allocation instead of assuming physical size equals logical size.
+
+### Fixed
+
+- Compression and decompression now open each active file while allowing readers but denying concurrent writers and deleters, reducing the risk of racing game/application updates during a WOF operation.
+- File size and modification time are now read from the already-open protected handle before deciding whether a previous analysis estimate is still reusable, closing the remaining change-between-check-and-open race.
+- Correct logical-versus-physical file accounting so sparse/allocation edge cases do not distort folder totals or estimated savings.
+- Skip files whose logical length cannot save an NTFS cluster instead of spending analysis time on files that cannot reduce allocation.
+- Strengthen target validation: only local NTFS folders are accepted; whole-drive roots, network/UNC paths, the active Windows directory, `System Volume Information`, root `$*` directories, root `Recovery`, and legacy LZNT1-compressed target folders are rejected.
+- Correct the GUI allocation breakdown to use actual on-disk bytes for physical categories.
+- Repair the v0.11.3 lockfile so existing dependency checksums remain identical to the known-good v0.11.2 lockfile; only the local package version changes.
+
 ## [0.11.2] - 2026-09-07
 
 ### Added
@@ -124,7 +151,8 @@
 
 - Initial release
 
-[Unreleased]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.3...HEAD
+[0.11.3]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/wefalltomorrow/Compactor/releases/tag/v0.11.2
 [0.11.1]: https://github.com/wefalltomorrow/Compactor/releases/tag/v0.11.1
 [0.11.0]: https://github.com/wefalltomorrow/Compactor/releases/tag/v0.11.0
