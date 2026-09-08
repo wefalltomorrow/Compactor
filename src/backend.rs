@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError};
 use filesize::PathExt;
-use winapi::um::winbase::{SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED};
+use winapi::um::winbase::SetThreadExecutionState;
+use winapi::um::winnt::{ES_CONTINUOUS, ES_SYSTEM_REQUIRED};
 
 use crate::background::BackgroundHandle;
 use crate::compression::{BackgroundCompactor, CompressionJob};
@@ -370,7 +371,6 @@ impl<T> Backend<T> {
             while !paused && !stopped && pending.len() < worker_count && !no_more_files {
                 if let Some(fi) = folder.pop(FileKind::Compressible) {
                     let path = folder.path.join(&fi.path);
-                    let logical_size = fi.logical_size;
                     let job = CompressionJob {
                         path: path.clone(),
                         content_len: fi.content_len,
