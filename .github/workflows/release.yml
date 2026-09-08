@@ -2,9 +2,6 @@ name: Release
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - master
 
 permissions:
   contents: write
@@ -38,13 +35,6 @@ jobs:
             throw 'Master changed after this release run started. Run the release workflow again.'
           }
 
-          if ($env:GITHUB_EVENT_NAME -eq 'push') {
-            $releaseCommit = (git rev-parse HEAD^).Trim()
-          } else {
-            $releaseCommit = $currentCommit
-          }
-          "RELEASE_SHA=$releaseCommit" >> $env:GITHUB_ENV
-
           $pullRequests = gh pr list `
             --repo $env:GITHUB_REPOSITORY `
             --base master `
@@ -59,10 +49,6 @@ jobs:
             }
             throw 'Release blocked by open pull requests targeting master.'
           }
-
-      - name: Check out release commit
-        shell: pwsh
-        run: git checkout --detach $env:RELEASE_SHA
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -128,14 +114,14 @@ jobs:
           git rev-parse $env:TAG 2>$null
           if ($LASTEXITCODE -eq 0) {
             $tagCommit = (git rev-list -n 1 $env:TAG).Trim()
-            if ($tagCommit -ne $env:RELEASE_SHA) {
+            if ($tagCommit -ne $env:GITHUB_SHA) {
               throw "$env:TAG already exists on a different commit."
             }
             Write-Host "$env:TAG already exists on this commit."
           } else {
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a $env:TAG $env:RELEASE_SHA -m "Compactor $env:TAG"
+            git tag -a $env:TAG -m "Compactor $env:TAG"
             git push origin $env:TAG
           }
 
