@@ -1,7 +1,8 @@
 name: Release
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [ "master" ]
 
 permissions:
   contents: write
@@ -12,6 +13,7 @@ env:
 
 jobs:
   release:
+    if: github.event.head_commit.message == 'Start v0.11.4 release'
     runs-on: windows-latest
     timeout-minutes: 20
 
@@ -26,13 +28,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if ($env:GITHUB_REF_NAME -ne 'master') {
-            throw 'Releases must be run from master.'
+            throw 'Releases must run from master.'
           }
 
           $currentCommit = (git rev-parse HEAD).Trim()
           $remoteMaster = ((git ls-remote origin refs/heads/master) -split "`t")[0].Trim()
           if ($currentCommit -ne $remoteMaster) {
-            throw 'Master changed after this release run started. Run the release workflow again.'
+            throw 'Master changed after this release run started.'
           }
 
           $pullRequests = gh pr list `
@@ -55,17 +57,56 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Read release version
+      - name: Prepare v0.11.4 commit
         shell: pwsh
         run: |
-          $match = Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1
-          if (-not $match) {
-            throw 'Could not read package version from Cargo.toml.'
+          $oldVersion = '0.11.3'
+          $version = '0.11.4'
+
+          $cargoPath = (Resolve-Path Cargo.toml).Path
+          $cargo = [System.IO.File]::ReadAllText($cargoPath)
+          $oldLine = "version = `"$oldVersion`""
+          $newLine = "version = `"$version`""
+          if (-not $cargo.Contains($oldLine)) {
+            throw "Cargo.toml does not contain $oldLine"
+          }
+          $cargo = $cargo.Replace($oldLine, $newLine)
+          [System.IO.File]::WriteAllText($cargoPath, $cargo, [System.Text.UTF8Encoding]::new($false))
+
+          cargo check --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) {
+            throw 'cargo check failed while updating the lockfile.'
           }
 
-          $version = $match.Matches[0].Groups[1].Value
+          $lockChanges = @(git diff --unified=0 -- Cargo.lock | Where-Object {
+            ($_ -match '^[+-]') -and ($_ -notmatch '^---') -and ($_ -notmatch '^\+\+\+')
+          })
+          if ($lockChanges.Count -ne 2 -or
+              $lockChanges[0] -ne '-version = "0.11.3"' -or
+              $lockChanges[1] -ne '+version = "0.11.4"') {
+            Write-Host 'Unexpected Cargo.lock changes:'
+            git diff -- Cargo.lock
+            throw 'Cargo.lock changed by more than the local package version.'
+          }
+
+          if (-not (Select-String -Path CHANGELOG.md -SimpleMatch '## [0.11.4]' -Quiet)) {
+            throw 'CHANGELOG.md does not contain a v0.11.4 entry.'
+          }
+
+          # The trigger commit temporarily enabled push releases. Restore the normal
+          # manual-only workflow in the actual release commit.
+          git checkout HEAD^ -- .github/workflows/release.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock .github/workflows/release.yml
+          git commit -m "Release v0.11.4"
+          git push origin HEAD:master
+
+          $releaseSha = (git rev-parse HEAD).Trim()
           "VERSION=$version" >> $env:GITHUB_ENV
           "TAG=v$version" >> $env:GITHUB_ENV
+          "RELEASE_SHA=$releaseSha" >> $env:GITHUB_ENV
 
       - name: Verify changelog entry
         shell: pwsh
@@ -107,23 +148,25 @@ jobs:
       - name: Run tests
         run: cargo test --release --locked --target x86_64-pc-windows-msvc
 
+      - name: Verify release commit
+        shell: pwsh
+        run: |
+          $remoteMaster = ((git ls-remote origin refs/heads/master) -split "`t")[0].Trim()
+          if ($remoteMaster -ne $env:RELEASE_SHA) {
+            throw 'Master changed after the release commit was prepared.'
+          }
+
       - name: Create tag
         shell: pwsh
         run: |
           git fetch --tags
           git rev-parse $env:TAG 2>$null
           if ($LASTEXITCODE -eq 0) {
-            $tagCommit = (git rev-list -n 1 $env:TAG).Trim()
-            if ($tagCommit -ne $env:GITHUB_SHA) {
-              throw "$env:TAG already exists on a different commit."
-            }
-            Write-Host "$env:TAG already exists on this commit."
-          } else {
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a $env:TAG -m "Compactor $env:TAG"
-            git push origin $env:TAG
+            throw "$env:TAG already exists."
           }
+
+          git tag -a $env:TAG $env:RELEASE_SHA -m "Compactor $env:TAG"
+          git push origin $env:TAG
 
       - name: Publish GitHub release
         shell: pwsh
