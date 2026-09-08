@@ -73,10 +73,17 @@ jobs:
           $cargo = $cargo.Replace($oldLine, $newLine)
           [System.IO.File]::WriteAllText($cargoPath, $cargo, [System.Text.UTF8Encoding]::new($false))
 
-          cargo check --target x86_64-pc-windows-msvc
-          if ($LASTEXITCODE -ne 0) {
-            throw 'cargo check failed while updating the lockfile.'
+          # Keep the known-good lockfile format and dependency set unchanged. Only
+          # update the workspace package version; a fresh locked build below proves
+          # the edited lockfile is accepted by Cargo.
+          $lockPath = (Resolve-Path Cargo.lock).Path
+          $lock = [System.IO.File]::ReadAllText($lockPath)
+          $pattern = '(\[\[package\]\]\r?\nname = "compactor"\r?\nversion = ")0\.11\.3(")'
+          $updatedLock = [regex]::Replace($lock, $pattern, '${1}0.11.4${2}', 1)
+          if ($updatedLock -eq $lock) {
+            throw 'Could not update the Compactor package version in Cargo.lock.'
           }
+          [System.IO.File]::WriteAllText($lockPath, $updatedLock, [System.Text.UTF8Encoding]::new($false))
 
           $lockChanges = @(git diff --unified=0 -- Cargo.lock | Where-Object {
             ($_ -match '^[+-]') -and ($_ -notmatch '^---') -and ($_ -notmatch '^\+\+\+')
@@ -93,8 +100,7 @@ jobs:
             throw 'CHANGELOG.md does not contain a v0.11.4 entry.'
           }
 
-          # The trigger commit temporarily enabled push releases. Restore the normal
-          # manual-only workflow in the actual release commit.
+          # Restore the normal manual-only release workflow in the actual release commit.
           git checkout HEAD^ -- .github/workflows/release.yml
 
           git config user.name "github-actions[bot]"
