@@ -43,6 +43,7 @@
           <button id="Button_Analyse" class="analyse" onclick="Action.analyse()">Analyse</button>
           <button id="Button_Compress" class="compress" onclick="Action.compress()">Compress</button>
           <button id="Button_Decompress" class="decompress" onclick="Action.decompress()">Decompress</button>
+          <button id="Button_Decompress_Exclude" class="decompress" title="Decompress this folder and add it to File exclusions" onclick="Action.decompress_and_exclude()">Decompress + exclude</button>
         </div>
       </section>
 
@@ -56,7 +57,7 @@
         </div>
 
         <div id="DirectStorage_Warning" class="warning" style="display:none">
-          DirectStorage runtime detected. Filesystem compression can reduce DirectStorage benefits; test game/application performance before keeping this folder compressed.
+          DirectStorage runtime detected. By default Compactor protects the detected game root from compression; this can be changed in Settings.
         </div>
 
         <div id="File_Count_Breakdown">
@@ -154,6 +155,14 @@
               <span>Limit HDDs to 1 worker</span>
             </span>
             <small class="setting-help">Recommended to avoid excessive seeking on mechanical drives.</small>
+          </label>
+
+          <label class="setting-field setting-toggle">
+            <span class="setting-checkline">
+              <input id="Protect_DirectStorage" name="Protect_DirectStorage" type="checkbox" checked>
+              <span>Protect DirectStorage games</span>
+            </span>
+            <small class="setting-help">Skip detected DirectStorage game roots so WOF compression does not interfere with their fast I/O path.</small>
           </label>
         </div>
       </div>

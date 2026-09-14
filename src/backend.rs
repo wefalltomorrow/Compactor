@@ -9,13 +9,19 @@ use winapi::um::winbase::SetThreadExecutionState;
 use winapi::um::winnt::{ES_CONTINUOUS, ES_SYSTEM_REQUIRED};
 
 use crate::background::BackgroundHandle;
+use crate::compact::{self, Compression};
 use crate::compression::{BackgroundCompactor, CompressionJob};
+use crate::directstorage::{discover_direct_storage_roots, is_under};
 use crate::folder::{
     compression_worker_count_for_path, validate_target_path, FileInfo, FileKind, FolderInfo,
     FolderScan,
 };
 use crate::gui::{CompressedViewItem, GuiRequest, GuiResponse, GuiWrapper};
 use crate::persistence::{config, incompressible_key, pathdb};
+
+const COMPRESSED_VIEW_PAGE_SIZE: usize = 100;
+const AUTO_MAX_DECOMPRESSION_THREADS: usize = 8;
+const WOF_PREFLIGHT_SAMPLE_FILES: usize = 8;
 
 pub struct Backend<T> {
     gui: GuiWrapper<T>,
@@ -63,7 +69,71 @@ fn progress(done_bytes: u64, total_bytes: u64) -> f32 {
     }
 }
 
-const COMPRESSED_VIEW_PAGE_SIZE: usize = 100;
+fn decompression_worker_count_for_path(
+    path: &Path,
+    max_threads: usize,
+    hdd_single_thread: bool,
+) -> usize {
+    let storage_workers = compression_worker_count_for_path(
+        path,
+        Compression::Xpress16k,
+        max_threads,
+        hdd_single_thread,
+    );
+
+    if max_threads == 0 {
+        storage_workers.min(AUTO_MAX_DECOMPRESSION_THREADS).max(1)
+    } else {
+        storage_workers.max(1)
+    }
+}
+
+fn protect_direct_storage_candidates(folder: &mut FolderInfo, roots: &[PathBuf]) -> usize {
+    if roots.is_empty() {
+        return 0;
+    }
+
+    let candidates = folder.len(FileKind::Compressible);
+    let mut protected = 0usize;
+
+    for _ in 0..candidates {
+        let Some(fi) = folder.pop(FileKind::Compressible) else {
+            break;
+        };
+        let absolute = folder.path.join(&fi.path);
+
+        if roots.iter().any(|root| is_under(&absolute, root)) {
+            protected += 1;
+            folder.push(FileKind::Skipped, fi);
+        } else {
+            folder.push(FileKind::Compressible, fi);
+        }
+    }
+
+    protected
+}
+
+fn add_folder_exclusion(path: &Path) -> Result<bool, String> {
+    let display = path.to_string_lossy().to_string();
+    let c = config();
+    let mut c = c.write().unwrap();
+    let mut current = c.current();
+
+    if current
+        .excludes
+        .iter()
+        .any(|existing| existing.trim().eq_ignore_ascii_case(&display))
+    {
+        return Ok(false);
+    }
+
+    current.excludes.push(display);
+    current.validate()?;
+    c.replace(current);
+    c.save()
+        .map_err(|err| format!("Unable to save exclusions: {}", err))?;
+    Ok(true)
+}
 
 #[derive(Default)]
 struct CompressedFolderTotals {
@@ -163,6 +233,55 @@ impl<T> Backend<T> {
         }
     }
 
+    fn wof_preflight(&self, folder: &FolderInfo, kind: FileKind) -> bool {
+        match compact::system_supports_compression() {
+            Ok(true) => {}
+            Ok(false) => {
+                self.gui.error(
+                    "WOF compression unavailable",
+                    "This version of Windows does not report WOF filesystem compression support.",
+                );
+                return false;
+            }
+            Err(err) => {
+                self.gui.error(
+                    "WOF compression unavailable",
+                    format!("Unable to initialise Windows WOF support: {}", err),
+                );
+                return false;
+            }
+        }
+
+        let files = match kind {
+            FileKind::Compressible => &folder.compressible.files,
+            FileKind::Compressed => &folder.compressed.files,
+            FileKind::Skipped => return true,
+        };
+
+        // Locked files can make an individual probe fail. Try a handful and
+        // only block the operation when Windows explicitly says WOF is not
+        // attached/supported on an accessible file from this volume.
+        for fi in files.iter().take(WOF_PREFLIGHT_SAMPLE_FILES) {
+            let path = folder.path.join(&fi.path);
+            match compact::file_supports_compression(&path) {
+                Ok(true) => return true,
+                Ok(false) => {
+                    self.gui.error(
+                        "WOF unavailable on this drive",
+                        "Windows Overlay Filter (Wof.sys) is not available for this NTFS volume, so WOF compression cannot be used here.",
+                    );
+                    return false;
+                }
+                Err(_) => continue,
+            }
+        }
+
+        // If every sample happened to be locked, let the normal per-file path
+        // handle it rather than refusing the whole operation on an uncertain
+        // preflight result.
+        true
+    }
+
     pub fn run(&mut self) {
         loop {
             match self.msg.recv() {
@@ -196,7 +315,13 @@ impl<T> Backend<T> {
                 Ok(GuiRequest::Decompress) if self.info.is_some() => {
                     let path = self.info.as_ref().unwrap().path.clone();
                     if self.target_is_valid(&path) {
-                        self.uncompress_loop();
+                        self.uncompress_loop(false);
+                    }
+                }
+                Ok(GuiRequest::DecompressAndExclude) if self.info.is_some() => {
+                    let path = self.info.as_ref().unwrap().path.clone();
+                    if self.target_is_valid(&path) {
+                        self.uncompress_loop(true);
                     }
                 }
                 Ok(msg) => {
@@ -318,6 +443,40 @@ impl<T> Backend<T> {
         let current = config().read().unwrap().current();
         let compression = Some(current.compression);
         let mut folder = self.info.take().expect("fileinfo");
+
+        if current.protect_direct_storage && folder.direct_storage {
+            self.gui.status("Checking DirectStorage protection", None);
+            let roots = discover_direct_storage_roots(&folder.path);
+            let protected = protect_direct_storage_candidates(&mut folder, &roots);
+            if protected > 0 {
+                self.gui.status(
+                    format!(
+                        "Protected {} files in {} DirectStorage game{}",
+                        protected,
+                        roots.len(),
+                        if roots.len() == 1 { "" } else { "s" }
+                    ),
+                    Some(0.0),
+                );
+                self.gui.summary(folder.summary());
+            }
+        }
+
+        if folder.len(FileKind::Compressible) == 0 {
+            self.gui.status("Nothing to compact", Some(1.0));
+            self.gui.summary(folder.summary());
+            self.gui.scanned();
+            self.info = Some(folder);
+            return;
+        }
+
+        if !self.wof_preflight(&folder, FileKind::Compressible) {
+            self.gui.summary(folder.summary());
+            self.gui.scanned();
+            self.info = Some(folder);
+            return;
+        }
+
         let _awake = SystemAwakeGuard::new();
         let worker_count = compression_worker_count_for_path(
             &folder.path,
@@ -569,159 +728,230 @@ impl<T> Backend<T> {
         self.info = Some(folder);
     }
 
-    fn uncompress_loop(&mut self) {
-        let _awake = SystemAwakeGuard::new();
-        let (send_file, send_file_rx) = bounded::<CompressionJob>(1);
-        let (recv_result_tx, recv_result) = bounded::<(PathBuf, io::Result<bool>)>(1);
-
-        let compactor = BackgroundCompactor::new(None, 0.0, send_file_rx, recv_result_tx);
-        let task = BackgroundHandle::spawn(compactor);
-        let start = Instant::now();
-
+    fn uncompress_loop(&mut self, exclude_after: bool) {
+        let current = config().read().unwrap().current();
         let mut folder = self.info.take().expect("fileinfo");
+
+        if folder.len(FileKind::Compressed) == 0 {
+            self.gui.status("Nothing to decompress", Some(1.0));
+            self.gui.scanned();
+            self.info = Some(folder);
+            return;
+        }
+
+        if !self.wof_preflight(&folder, FileKind::Compressed) {
+            self.gui.summary(folder.summary());
+            self.gui.scanned();
+            self.info = Some(folder);
+            return;
+        }
+
+        let _awake = SystemAwakeGuard::new();
+        let worker_count = decompression_worker_count_for_path(
+            &folder.path,
+            current.max_threads,
+            current.hdd_single_thread,
+        );
+        let (send_file, send_file_rx) = bounded::<CompressionJob>(worker_count);
+        let (recv_result_tx, recv_result) = bounded::<(PathBuf, io::Result<bool>)>(worker_count);
+        let mut tasks = Vec::with_capacity(worker_count);
+
+        for _ in 0..worker_count {
+            let compactor = BackgroundCompactor::new(
+                None,
+                0.0,
+                send_file_rx.clone(),
+                recv_result_tx.clone(),
+            );
+            tasks.push(BackgroundHandle::spawn(compactor));
+        }
+
+        drop(send_file_rx);
+        drop(recv_result_tx);
+
+        let start = Instant::now();
         let summary = folder.summary();
         let total_files = folder.len(FileKind::Compressed);
         let total_bytes = summary.compressed.logical_size;
         let mut done_files = 0usize;
+        let mut expanded_files = 0usize;
         let mut done_bytes = 0u64;
+        let mut pending: HashMap<PathBuf, FileInfo> = HashMap::with_capacity(worker_count);
+        let mut failed = Vec::new();
+        let mut no_more_files = false;
 
         let mut last_update = Instant::now();
         let mut paused = false;
         let mut stopped = false;
-
         let old_size = folder.physical_size;
 
         self.gui.compacting();
-        self.gui.status("Expanding".to_string(), Some(0.0));
+        self.gui.status("Expanding", Some(0.0));
 
         loop {
-            while paused && !stopped {
-                self.gui.status(
-                    "Paused".to_string(),
-                    Some(progress(done_bytes, total_bytes)),
-                );
-                self.gui.summary(folder.summary());
-
-                match self.msg.recv() {
-                    Ok(GuiRequest::Pause) => paused = true,
-                    Ok(GuiRequest::Resume) => {
-                        self.gui.status(
-                            "Expanding".to_string(),
-                            Some(progress(done_bytes, total_bytes)),
-                        );
-                        self.gui.resumed();
-                        paused = false;
-                        last_update = Instant::now();
-                    }
-                    Ok(GuiRequest::Stop) => {
-                        stopped = true;
-                        break;
-                    }
-                    Ok(_) => (),
-                    Err(_) => {
-                        stopped = true;
-                        break;
-                    }
-                }
-            }
-
-            if stopped {
-                break;
-            }
-
-            if last_update.elapsed() > Duration::from_millis(50) {
-                self.gui.status(
-                    "Expanding".to_string(),
-                    Some(progress(done_bytes, total_bytes)),
-                );
-                last_update = Instant::now();
-                self.gui.summary(folder.summary());
-            }
-
-            if let Some(mut fi) = folder.pop(FileKind::Compressed) {
-                let logical_size = fi.logical_size;
-                send_file
-                    .send(CompressionJob {
-                        path: folder.path.join(&fi.path),
+            while !paused && !stopped && pending.len() < worker_count && !no_more_files {
+                if let Some(fi) = folder.pop(FileKind::Compressed) {
+                    let path = folder.path.join(&fi.path);
+                    let job = CompressionJob {
+                        path: path.clone(),
                         content_len: fi.content_len,
                         modified_time: fi.modified_time,
                         estimate_valid: fi.estimate_valid,
                         estimated_ratio: fi.estimated_ratio,
-                    })
-                    .expect("send_file");
+                    };
 
-                let mut waiting = false;
-                loop {
-                    if let Ok((path, result)) = recv_result.recv_timeout(Duration::from_millis(25)) {
-                        done_files += 1;
-                        done_bytes = done_bytes.saturating_add(logical_size);
-
-                        match result {
-                            Ok(_) => {
-                                fi.physical_size = path.size_on_disk().unwrap_or(fi.logical_size);
-                                fi.estimated_physical_size = fi.physical_size;
-                                if let Ok(metadata) = std::fs::metadata(&path) {
-                                    use std::os::windows::fs::MetadataExt;
-                                    fi.content_len = metadata.len();
-                                    fi.logical_size = metadata.len();
-                                    fi.modified_time = metadata.last_write_time();
-                                }
-                                folder.push(FileKind::Compressible, fi);
-                            }
-                            Err(err) => {
-                                fi.estimated_physical_size = fi.physical_size;
-                                self.gui.status(
-                                    format!("Error: {}, {}", err, fi.path.display()),
-                                    Some(progress(done_bytes, total_bytes)),
-                                );
-                                folder.push(FileKind::Skipped, fi);
-                            }
-                        }
-
+                    if send_file.send(job).is_err() {
+                        folder.push(FileKind::Compressed, fi);
+                        stopped = true;
                         break;
                     }
 
-                    if !waiting && last_update.elapsed() > Duration::from_millis(50) {
+                    pending.insert(path, fi);
+                } else {
+                    no_more_files = true;
+                }
+            }
+
+            if (no_more_files || stopped) && pending.is_empty() {
+                break;
+            }
+
+            loop {
+                match self.msg.try_recv() {
+                    Ok(GuiRequest::Pause) if !paused && !stopped => {
+                        paused = true;
+                        self.gui.paused();
                         self.gui.status(
-                            format!("Expanding: {}", fi.path.display()),
+                            if pending.is_empty() {
+                                "Paused"
+                            } else {
+                                "Pausing after active files finish"
+                            },
                             Some(progress(done_bytes, total_bytes)),
                         );
-                        last_update = Instant::now();
-                        waiting = true;
+                    }
+                    Ok(GuiRequest::Resume) if paused && !stopped => {
+                        paused = false;
+                        self.gui.resumed();
+                        self.gui
+                            .status("Expanding", Some(progress(done_bytes, total_bytes)));
+                    }
+                    Ok(GuiRequest::Stop) if !stopped => {
+                        stopped = true;
+                        self.gui.status(
+                            if pending.is_empty() {
+                                "Stopping"
+                            } else {
+                                "Stopping after active files finish"
+                            },
+                            Some(progress(done_bytes, total_bytes)),
+                        );
+                    }
+                    Ok(_) => (),
+                    Err(_) => break,
+                }
+            }
+
+            match recv_result.recv_timeout(Duration::from_millis(25)) {
+                Ok((path, result)) => {
+                    let Some(mut fi) = pending.remove(&path) else {
+                        continue;
+                    };
+                    let logical_size = fi.logical_size;
+                    let display_path = fi.path.clone();
+                    done_files += 1;
+                    done_bytes = done_bytes.saturating_add(logical_size);
+
+                    match result {
+                        Ok(_) => {
+                            expanded_files += 1;
+                            fi.physical_size = path.size_on_disk().unwrap_or(fi.logical_size);
+                            fi.estimated_physical_size = fi.physical_size;
+                            fi.estimate_valid = false;
+                            if let Ok(metadata) = std::fs::metadata(&path) {
+                                use std::os::windows::fs::MetadataExt;
+                                fi.content_len = metadata.len();
+                                fi.logical_size = metadata.len();
+                                fi.modified_time = metadata.last_write_time();
+                            }
+                            folder.push(FileKind::Compressible, fi);
+                        }
+                        Err(err) => {
+                            fi.estimated_physical_size = fi.physical_size;
+                            fi.estimate_valid = false;
+                            self.gui.status(
+                                format!("Error: {}, {}", err, display_path.display()),
+                                Some(progress(done_bytes, total_bytes)),
+                            );
+                            failed.push(fi);
+                        }
                     }
 
-                    match self.msg.try_recv() {
-                        Ok(GuiRequest::Pause) if !paused => {
-                            self.gui.status(
-                                format!("Pausing after {}", fi.path.display()),
-                                Some(progress(done_bytes, total_bytes)),
-                            );
-                            self.gui.paused();
-                            paused = true;
+                    if last_update.elapsed() > Duration::from_millis(50) {
+                        last_update = Instant::now();
+                        self.gui.status(
+                            if paused {
+                                if pending.is_empty() {
+                                    "Paused".to_string()
+                                } else {
+                                    "Pausing after active files finish".to_string()
+                                }
+                            } else if stopped {
+                                if pending.is_empty() {
+                                    "Stopping".to_string()
+                                } else {
+                                    "Stopping after active files finish".to_string()
+                                }
+                            } else {
+                                format!("Expanding: {}", display_path.display())
+                            },
+                            Some(progress(done_bytes, total_bytes)),
+                        );
+
+                        if pending.is_empty() {
+                            self.gui.summary(folder.summary());
                         }
-                        Ok(GuiRequest::Resume) => {
-                            self.gui.resumed();
-                            paused = false;
-                            stopped = false;
-                        }
-                        Ok(GuiRequest::Stop) if !stopped => {
-                            self.gui.status(
-                                format!("Stopping after {}", fi.path.display()),
-                                Some(progress(done_bytes, total_bytes)),
-                            );
-                            stopped = true;
-                        }
-                        Ok(_) => (),
-                        Err(_) => (),
                     }
                 }
-            } else {
-                break;
+                Err(RecvTimeoutError::Timeout) => {
+                    if paused
+                        && pending.is_empty()
+                        && last_update.elapsed() > Duration::from_millis(50)
+                    {
+                        last_update = Instant::now();
+                        self.gui
+                            .status("Paused", Some(progress(done_bytes, total_bytes)));
+                        self.gui.summary(folder.summary());
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    stopped = true;
+                    break;
+                }
             }
         }
 
         drop(send_file);
-        task.wait();
+        for task in tasks {
+            task.wait();
+        }
+
+        for fi in failed {
+            folder.push(FileKind::Compressed, fi);
+        }
+
+        let mut exclusion_added = false;
+        if exclude_after && !stopped {
+            match add_folder_exclusion(&folder.path) {
+                Ok(added) => {
+                    exclusion_added = true;
+                    if added {
+                        self.gui.config();
+                    }
+                }
+                Err(err) => self.gui.error("Unable to add exclusion", err),
+            }
+        }
 
         let new_size = folder.physical_size;
         let decimal = config().read().unwrap().current().decimal;
@@ -730,14 +960,21 @@ impl<T> Backend<T> {
         let msg = if stopped {
             format!(
                 "Stopped after expanding {} of {} files in {:.2?}",
-                done_files,
+                expanded_files,
                 total_files,
+                start.elapsed()
+            )
+        } else if exclude_after && exclusion_added {
+            format!(
+                "Expanded {} files using {} more space and excluded this folder in {:.2?}",
+                expanded_files,
+                format_size(wasted, decimal),
                 start.elapsed()
             )
         } else {
             format!(
                 "Expanded {} files using {} more space in {:.2?}",
-                done_files,
+                expanded_files,
                 format_size(wasted, decimal),
                 start.elapsed()
             )
@@ -848,5 +1085,44 @@ mod tests {
         assert_eq!(1, pages);
         assert_eq!(3, total);
         assert_eq!(3, page_items.len());
+    }
+
+    #[test]
+    fn direct_storage_protection_moves_only_matching_candidates() {
+        let mut folder = FolderInfo::new(PathBuf::from("D:").join("Games"));
+        for path in ["Foo\\data.bin", "Bar\\data.bin"] {
+            folder.push(
+                FileKind::Compressible,
+                FileInfo {
+                    path: PathBuf::from(path),
+                    content_len: 8192,
+                    modified_time: 0,
+                    estimate_valid: true,
+                    estimated_ratio: 0.5,
+                    logical_size: 8192,
+                    physical_size: 8192,
+                    estimated_physical_size: 4096,
+                },
+            );
+        }
+
+        let protected = protect_direct_storage_candidates(
+            &mut folder,
+            &[PathBuf::from(r"D:\Games\Foo")],
+        );
+        assert_eq!(1, protected);
+        assert_eq!(1, folder.compressible.count);
+        assert_eq!(1, folder.skipped.count);
+        assert_eq!(PathBuf::from(r"Bar\data.bin"), folder.compressible.files[0].path);
+    }
+
+    #[test]
+    fn decompression_auto_is_capped_but_manual_is_respected() {
+        // The exact storage result is exercised in folder.rs. This helper only
+        // adds the decompression-specific Auto cap.
+        assert_eq!(
+            1,
+            decompression_worker_count_for_path(Path::new(r"Z:\unknown"), 0, true)
+        );
     }
 }

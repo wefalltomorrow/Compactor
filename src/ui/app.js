@@ -170,6 +170,10 @@ var Action = (function() {
 			external.invoke(JSON.stringify({ type: 'Decompress' }));
 		},
 
+		decompress_and_exclude: function() {
+			external.invoke(JSON.stringify({ type: 'DecompressAndExclude' }));
+		},
+
 		view_compressed: function(view, query, page) {
 			external.invoke(JSON.stringify({
 				type: 'ViewCompressed',
@@ -204,50 +208,89 @@ var Action = (function() {
 var Response = (function() {
 	"use strict";
 
+	var pendingStatus = null;
+	var pendingSummary = null;
+	var flushTimer = null;
+
+	var apply = function(msg) {
+		switch(msg.type) {
+			case "Config":
+				Gui.set_decimal(msg.decimal);
+				Gui.set_compression(msg.compression);
+				Gui.set_min_savings(msg.min_savings_percent);
+				Gui.set_max_threads(msg.max_threads);
+				Gui.set_compression_priority(msg.compression_priority);
+				Gui.set_hdd_single_thread(msg.hdd_single_thread);
+				Gui.set_protect_direct_storage(msg.protect_direct_storage);
+				Gui.set_excludes(msg.excludes);
+				break;
+
+			case "Folder":
+				Gui.set_folder(msg.path);
+				break;
+
+			case "Version":
+				Gui.version(msg.date, msg.version);
+				break;
+
+			case "Status":
+				Gui.set_status(msg.status, msg.pct);
+				break;
+
+			case "Error":
+				window.alert(msg.title + "\n\n" + msg.message);
+				break;
+
+			case "Paused":
+			case "Resumed":
+			case "Stopped":
+			case "Scanned":
+			case "Compacting":
+				Gui[msg.type.toLowerCase()]();
+				break;
+
+			case "FolderSummary":
+				Gui.set_folder_summary(msg.info);
+				break;
+
+			case "CompressedView":
+				Gui.set_compressed_view(msg);
+				break;
+		}
+	};
+
+	var flush = function() {
+		if (flushTimer !== null) {
+			clearTimeout(flushTimer);
+			flushTimer = null;
+		}
+
+		var status = pendingStatus;
+		var summary = pendingSummary;
+		pendingStatus = null;
+		pendingSummary = null;
+
+		if (status) apply(status);
+		if (summary) apply(summary);
+	};
+
 	return {
 		dispatch: function(msg) {
-			switch(msg.type) {
-				case "Config":
-					Gui.set_decimal(msg.decimal);
-					Gui.set_compression(msg.compression);
-					Gui.set_min_savings(msg.min_savings_percent);
-					Gui.set_max_threads(msg.max_threads);
-					Gui.set_compression_priority(msg.compression_priority);
-					Gui.set_hdd_single_thread(msg.hdd_single_thread);
-					Gui.set_excludes(msg.excludes);
-					break;
+			// High-frequency scan/compression updates are latest-wins. Coalescing
+			// them avoids repeatedly rebuilding the same DOM within one paint
+			// window while discrete state changes still arrive immediately.
+			if (msg.type == "Status") {
+				pendingStatus = msg;
+			} else if (msg.type == "FolderSummary") {
+				pendingSummary = msg;
+			} else {
+				flush();
+				apply(msg);
+				return;
+			}
 
-				case "Folder":
-					Gui.set_folder(msg.path);
-					break;
-
-				case "Version":
-					Gui.version(msg.date, msg.version);
-					break;
-
-				case "Status":
-					Gui.set_status(msg.status, msg.pct);
-					break;
-
-				case "Error":
-					window.alert(msg.title + "\n\n" + msg.message);
-					break;
-
-				case "Paused":
-				case "Resumed":
-				case "Stopped":
-				case "Scanned":
-				case "Compacting":
-					Gui[msg.type.toLowerCase()]();
-					break;
-
-				case "FolderSummary":
-					Gui.set_folder_summary(msg.info);
-					break;
-
-				case "CompressedView":
-					Gui.set_compressed_view(msg);
-					break;
+			if (flushTimer === null) {
+				flushTimer = setTimeout(flush, 50);
 			}
 		}
 	};
@@ -293,6 +336,7 @@ var Gui = (function() {
 					max_threads: maxThreads,
 					compression_priority: $("#Compression_Priority").val(),
 					hdd_single_thread: $("#HDD_Single_Thread").prop("checked"),
+					protect_direct_storage: $("#Protect_DirectStorage").prop("checked"),
 					excludes: $("#Excludes").val()
 				});
 			});
@@ -421,6 +465,10 @@ var Gui = (function() {
 			$("#HDD_Single_Thread").prop("checked", enabled);
 		},
 
+		set_protect_direct_storage: function(enabled) {
+			$("#Protect_DirectStorage").prop("checked", enabled);
+		},
+
 		set_excludes: function(excludes) {
 			$("#Excludes").val(excludes);
 		},
@@ -459,6 +507,7 @@ var Gui = (function() {
 			$("#Button_Analyse").hide();
 			$("#Button_Compress").hide();
 			$("#Button_Decompress").hide();
+			$("#Button_Decompress_Exclude").hide();
 			$("#Button_View_Compressed").hide();
 			$("#Command").show();
 		},
@@ -470,6 +519,7 @@ var Gui = (function() {
 			$("#Button_Analyse").hide();
 			$("#Button_Compress").hide();
 			$("#Button_Decompress").hide();
+			$("#Button_Decompress_Exclude").hide();
 			$("#Button_View_Compressed").hide();
 		},
 
@@ -501,9 +551,11 @@ var Gui = (function() {
 
 			if ($("#File_Count_Compressed").text() != "0") {
 				$("#Button_Decompress").show();
+				$("#Button_Decompress_Exclude").show();
 				$("#Button_View_Compressed").show();
 			} else {
 				$("#Button_Decompress").hide();
+				$("#Button_Decompress_Exclude").hide();
 				$("#Button_View_Compressed").hide();
 			}
 		},
