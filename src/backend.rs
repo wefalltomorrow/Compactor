@@ -135,6 +135,15 @@ fn add_folder_exclusion(path: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
+fn move_compressible_to_skipped(folder: &mut FolderInfo) {
+    let count = folder.len(FileKind::Compressible);
+    for _ in 0..count {
+        if let Some(fi) = folder.pop(FileKind::Compressible) {
+            folder.push(FileKind::Skipped, fi);
+        }
+    }
+}
+
 #[derive(Default)]
 struct CompressedFolderTotals {
     count: usize,
@@ -773,7 +782,6 @@ impl<T> Backend<T> {
         let summary = folder.summary();
         let total_files = folder.len(FileKind::Compressed);
         let total_bytes = summary.compressed.logical_size;
-        let mut done_files = 0usize;
         let mut expanded_files = 0usize;
         let mut done_bytes = 0u64;
         let mut pending: HashMap<PathBuf, FileInfo> = HashMap::with_capacity(worker_count);
@@ -859,7 +867,6 @@ impl<T> Backend<T> {
                     };
                     let logical_size = fi.logical_size;
                     let display_path = fi.path.clone();
-                    done_files += 1;
                     done_bytes = done_bytes.saturating_add(logical_size);
 
                     match result {
@@ -940,11 +947,12 @@ impl<T> Backend<T> {
             folder.push(FileKind::Compressed, fi);
         }
 
-        let mut exclusion_added = false;
+        let mut exclusion_active = false;
         if exclude_after && !stopped {
             match add_folder_exclusion(&folder.path) {
                 Ok(added) => {
-                    exclusion_added = true;
+                    exclusion_active = true;
+                    move_compressible_to_skipped(&mut folder);
                     if added {
                         self.gui.config();
                     }
@@ -964,7 +972,7 @@ impl<T> Backend<T> {
                 total_files,
                 start.elapsed()
             )
-        } else if exclude_after && exclusion_added {
+        } else if exclude_after && exclusion_active {
             format!(
                 "Expanded {} files using {} more space and excluded this folder in {:.2?}",
                 expanded_files,
@@ -1089,7 +1097,7 @@ mod tests {
 
     #[test]
     fn direct_storage_protection_moves_only_matching_candidates() {
-        let mut folder = FolderInfo::new(PathBuf::from("D:").join("Games"));
+        let mut folder = FolderInfo::new(PathBuf::from(r"D:\Games"));
         for path in ["Foo\\data.bin", "Bar\\data.bin"] {
             folder.push(
                 FileKind::Compressible,
