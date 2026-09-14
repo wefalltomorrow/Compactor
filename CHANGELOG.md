@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## [0.11.5] - 2026-09-14
+
+### Added
+
+- Protect detected DirectStorage game roots from new WOF compression by default, with a Settings toggle to allow an explicit override.
+- Infer DirectStorage game roots from common launcher/library layouts and Unreal Engine DirectStorage layouts instead of treating an entire game library as one target.
+- Add **Decompress + exclude** to expand a selected folder and persist it in File exclusions so it is not compressed again later.
+- Check Windows/WOF availability before starting compression or decompression and show a clear error when WOF is unavailable on the target volume.
+
+### Changed
+
+- Decompression now uses storage-aware parallel workers on SSDs. Auto is capped at eight workers, manual thread limits are respected, and the HDD single-worker safeguard still applies.
+- Coalesce high-frequency status and folder-summary updates in the embedded UI so large scans and file operations do less redundant DOM work.
+- DirectStorage detection now acts as a protection mechanism rather than only displaying a warning.
+
+### Fixed
+
+- Failed decompression jobs remain classified as compressed instead of being moved into the skipped bucket.
+- **Decompress + exclude** immediately updates the analysed folder state so the newly excluded files are not offered for recompression in the same session.
+
 ## [0.11.4] - 2026-09-08
 
 ### Changed
@@ -160,7 +180,8 @@
 
 - Initial release
 
-[Unreleased]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.4...HEAD
+[Unreleased]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.5...HEAD
+[0.11.5]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.4...v0.11.5
 [0.11.4]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.3...v0.11.4
 [0.11.3]: https://github.com/wefalltomorrow/Compactor/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/wefalltomorrow/Compactor/releases/tag/v0.11.2
@@ -172,7 +193,7 @@
 [0.10.0]: https://github.com/Freaky/Compactor/releases/tag/v0.10.0
 [0.10.1]: https://github.com/Freaky/Compactor/releases/tag/v0.10.1
 [#6]: https://github.com/Freaky/Compactor/issues/6
-[#8]: https://github.com/Freaky/Compactor/issues/8
+[#8]: https://github.com/Freaky/Compactor/pull/8
 [#9]: https://github.com/Freaky/Compactor/pull/9
 [#10]: https://github.com/Freaky/Compactor/pull/10
 [#11]: https://github.com/Freaky/Compactor/pull/11
