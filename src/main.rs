@@ -8,6 +8,7 @@ mod compact;
 mod compression;
 mod config;
 mod console;
+mod directstorage;
 mod folder;
 mod gui;
 mod persistence;

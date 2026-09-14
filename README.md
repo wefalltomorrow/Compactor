@@ -13,14 +13,16 @@ This repository is a maintained fork of [Freaky/Compactor](https://github.com/Fr
 - Sampled compressibility analysis before compression
 - Configurable minimum estimated savings threshold, defaulting to 1%
 - Estimated post-compression size and additional savings during analysis
-- Storage-aware multithreaded analysis and compression on SSDs
+- Storage-aware multithreaded analysis, compression, and decompression on SSDs
 - Conservative physical-core-aware LZX Auto concurrency with manual override
 - Single-threaded HDD operation by default
 - HDD analysis sampling designed to reduce seek overhead
 - Configurable compression/decompression worker priority, defaulting to Below Normal
+- DirectStorage game-root detection and protection, enabled by default with a Settings override
+- Decompress + exclude for restoring a folder and preventing future recompression
+- WOF availability checks before file transformations begin
 - The system is kept awake during compression/decompression while the display may still turn off
 - Local-NTFS target validation and protection for Windows-managed paths
-- DirectStorage runtime detection with a warning before compression
 - In-app searchable viewer for folders containing WOF-compressed files
 - Pause, resume, and stop controls
 - Timestamp preservation after compression and decompression
@@ -36,12 +38,13 @@ This repository is a maintained fork of [Freaky/Compactor](https://github.com/Fr
 - Maximum threads: `Auto`
 - Compression priority: `Below Normal`
 - HDDs only use 1 thread: enabled
+- Protect DirectStorage games: enabled
 - Excluded paths:
   - `*:\\Windows*`
   - `*:\\System Volume Information*`
   - `*:\\$*`
 
-`Auto` is storage- and workload-aware. On SSDs it uses up to eight workers for analysis. XPRESS compression can use up to 16 logical-CPU workers. LZX Auto uses one outer worker on CPUs with four or fewer physical cores and at most two on larger CPUs because LZX WOF operations can be CPU-intensive. A manual limit from 1 to 16 is treated as an explicit override and is respected for LZX as well. HDDs still use one worker by default when the HDD safeguard is enabled, and unknown storage is handled conservatively with one worker. Compression reuses a valid analysis estimate when the file has not changed, avoiding duplicate sampling before WOF compression.
+`Auto` is storage- and workload-aware. On SSDs it uses up to eight workers for analysis. XPRESS compression can use up to 16 logical-CPU workers. LZX Auto uses one outer worker on CPUs with four or fewer physical cores and at most two on larger CPUs because LZX WOF operations can be CPU-intensive. A manual limit from 1 to 16 is treated as an explicit override and is respected for LZX as well. Auto decompression uses storage-aware parallelism up to eight workers. HDDs still use one worker by default when the HDD safeguard is enabled, and unknown storage is handled conservatively with one worker. Compression reuses a valid analysis estimate when the file has not changed, avoiding duplicate sampling before WOF compression.
 
 Compression/decompression worker priority can be set to Lowest, Below Normal, Normal, Above Normal, or Highest. Only the worker threads are affected; the GUI and analysis threads remain at normal priority. Below Normal is the default so idle CPU capacity can still be used while foreground work gets preference when the system is busy.
 
@@ -58,10 +61,10 @@ Compactor is portable and does not require an installer or background service.
 1. Choose a folder.
 2. Wait for analysis to complete.
 3. Review current disk usage and estimated savings.
-4. Change the compression mode, savings threshold, thread limit, or worker priority in Settings if required.
+4. Change the compression mode, savings threshold, thread limit, worker priority, or DirectStorage protection in Settings if required.
 5. Select Compress.
 
-Use Decompress to remove WOF backing from files previously compressed with Compactor. After analysis, select View beside the compressed count to browse folders containing WOF-compressed files inside Compactor. The viewer includes path filtering and pagination for large scans.
+Use Decompress to remove WOF backing from files previously compressed with Compactor. Use **Decompress + exclude** when you also want the selected folder added to File exclusions so it will not be compressed again on later runs. After analysis, select View beside the compressed count to browse folders containing WOF-compressed files inside Compactor. The viewer includes path filtering and pagination for large scans.
 
 ## Notes
 
@@ -69,7 +72,9 @@ Compactor is best suited to applications and game files that change infrequently
 
 Compression and decompression hold each active file against concurrent writers and deleters while still allowing readers. This reduces the risk of racing an application or game update in the middle of a WOF operation. Files that change between analysis and compression are re-estimated instead of reusing stale analysis results.
 
-If a selected folder contains `dstorage.dll` or `dstoragecore.dll`, Compactor warns that DirectStorage is present. WOF compression can prevent DirectStorage/BypassIO from taking its intended fast path, so consider leaving DirectStorage games uncompressed when I/O performance matters.
+If a selected tree contains `dstorage.dll` or `dstoragecore.dll`, Compactor identifies the likely game/install root using common game-library layouts and Unreal Engine DirectStorage layouts. With **Protect DirectStorage games** enabled, files under those detected roots are removed from the compression queue before WOF is applied. The setting can be disabled when you deliberately want to compress such files. Detection is conservative and based on the presence/layout of the DirectStorage runtime; it cannot prove that every detected game is actively using BypassIO at that moment.
+
+Before compression or decompression starts, Compactor also checks that Windows reports WOF support and probes the target volume using available files. If WOF is explicitly unavailable, the operation is stopped with a clear error instead of failing repeatedly file by file.
 
 Do not run Compactor blindly across an entire system drive. Whole-drive roots, network/UNC targets, non-NTFS filesystems, the active Windows directory, `System Volume Information`, root `$*` directories, and the root `Recovery` directory are rejected. User-selected folders can still contain databases, virtual machines, active logs, or other write-heavy files that are poor candidates for WOF compression.
 
@@ -95,9 +100,13 @@ This fork includes the following changes:
 - Actual NTFS cluster-size-aware eligibility and projected allocation
 - LZX as the default compression mode with a conservative one-or-two-worker Auto policy and manual override
 - Configurable compression/decompression worker priority, defaulting to Below Normal
+- Storage-aware parallel decompression with the HDD single-worker safeguard
+- Decompress + exclude workflow
 - System-sleep prevention during compression/decompression without forcing the display awake
 - Stronger local-NTFS and Windows-managed-path target validation
-- DirectStorage runtime warning
+- DirectStorage game-root detection and default protection with an override
+- WOF availability preflight checks
+- Coalesced high-frequency GUI updates for smoother large operations
 - Removal of default file-extension exclusions
 - Storage-aware worker selection and parallel SSD processing
 - Reduced-seek HDD analysis sampling

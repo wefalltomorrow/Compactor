@@ -20,6 +20,10 @@ fn default_hdd_single_thread() -> bool {
     true
 }
 
+fn default_protect_direct_storage() -> bool {
+    true
+}
+
 fn default_compression_priority() -> CompressionPriority {
     CompressionPriority::BelowNormal
 }
@@ -82,6 +86,8 @@ pub struct Config {
     pub max_threads: usize,
     #[serde(default = "default_hdd_single_thread")]
     pub hdd_single_thread: bool,
+    #[serde(default = "default_protect_direct_storage")]
+    pub protect_direct_storage: bool,
     #[serde(default = "default_compression_priority")]
     pub compression_priority: CompressionPriority,
     pub excludes: Vec<String>,
@@ -95,6 +101,7 @@ impl Default for Config {
             min_savings_percent: default_min_savings_percent(),
             max_threads: default_max_threads(),
             hdd_single_thread: default_hdd_single_thread(),
+            protect_direct_storage: default_protect_direct_storage(),
             compression_priority: default_compression_priority(),
             excludes: vec![
                 "*:\\Windows*",
@@ -188,6 +195,7 @@ fn test_config() {
     assert_eq!(s.min_savings_percent, 1.0);
     assert_eq!(s.max_threads, 0);
     assert!(s.hdd_single_thread);
+    assert!(s.protect_direct_storage);
     assert_eq!(s.compression_priority, CompressionPriority::BelowNormal);
     assert!((s.ratio_limit() - 0.99).abs() < f32::EPSILON);
 

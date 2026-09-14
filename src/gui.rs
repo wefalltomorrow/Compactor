@@ -25,6 +25,7 @@ pub enum GuiRequest {
         min_savings_percent: f32,
         max_threads: usize,
         hdd_single_thread: bool,
+        protect_direct_storage: bool,
         compression_priority: String,
         excludes: String,
     },
@@ -32,6 +33,7 @@ pub enum GuiRequest {
     ChooseFolder,
     Compress,
     Decompress,
+    DecompressAndExclude,
     ViewCompressed {
         view: String,
         query: String,
@@ -73,6 +75,7 @@ pub enum GuiResponse {
         min_savings_percent: f32,
         max_threads: usize,
         hdd_single_thread: bool,
+        protect_direct_storage: bool,
         compression_priority: String,
         excludes: String,
     },
@@ -145,6 +148,7 @@ impl<T> GuiWrapper<T> {
             min_savings_percent: s.min_savings_percent,
             max_threads: s.max_threads,
             hdd_single_thread: s.hdd_single_thread,
+            protect_direct_storage: s.protect_direct_storage,
             compression_priority: s.compression_priority.to_string(),
             excludes: s.excludes.join("\n"),
         });
@@ -257,6 +261,7 @@ pub fn spawn_gui() {
                     min_savings_percent,
                     max_threads,
                     hdd_single_thread,
+                    protect_direct_storage,
                     compression_priority,
                     excludes,
                 }) => {
@@ -266,6 +271,7 @@ pub fn spawn_gui() {
                         min_savings_percent,
                         max_threads,
                         hdd_single_thread,
+                        protect_direct_storage,
                         compression_priority: compression_priority.parse().unwrap_or_default(),
                         excludes: excludes.split('\n').map(str::to_owned).collect(),
                     };
@@ -285,6 +291,7 @@ pub fn spawn_gui() {
                                 min_savings_percent: s.min_savings_percent,
                                 max_threads: s.max_threads,
                                 hdd_single_thread: s.hdd_single_thread,
+                                protect_direct_storage: s.protect_direct_storage,
                                 compression_priority: s.compression_priority.to_string(),
                                 excludes: s.excludes.join("\n"),
                             },
@@ -312,6 +319,7 @@ pub fn spawn_gui() {
                             min_savings_percent: s.min_savings_percent,
                             max_threads: s.max_threads,
                             hdd_single_thread: s.hdd_single_thread,
+                            protect_direct_storage: s.protect_direct_storage,
                             compression_priority: s.compression_priority.to_string(),
                             excludes: s.excludes.join("\n"),
                         },
