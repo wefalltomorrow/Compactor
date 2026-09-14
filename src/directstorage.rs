@@ -45,10 +45,25 @@ fn lower_name(path: &Path) -> String {
 }
 
 fn normalized(path: &Path) -> String {
-    path.to_string_lossy()
+    let value = path
+        .to_string_lossy()
         .replace('/', "\\")
         .trim_end_matches('\\')
-        .to_ascii_lowercase()
+        .to_ascii_lowercase();
+
+    // All production paths come from the folder picker and are absolute, but
+    // normalising the separator after a drive prefix also makes internal path
+    // comparisons deterministic for PathBuf values assembled in tests/helpers.
+    if value.as_bytes().get(1) == Some(&b':') && value.len() > 2 {
+        let rest = value[2..].trim_start_matches('\\');
+        if rest.is_empty() {
+            value[..2].to_string()
+        } else {
+            format!("{}\\{}", &value[..2], rest)
+        }
+    } else {
+        value
+    }
 }
 
 pub fn is_under(path: &Path, root: &Path) -> bool {
