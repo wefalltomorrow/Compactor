@@ -161,7 +161,7 @@ fn infer_game_root(
             break;
         }
 
-        let Some(parent) = current.parent() else {
+        let Some(parent) = current.parent().map(Path::to_path_buf) else {
             break;
         };
         if parent == current {
@@ -169,7 +169,7 @@ fn infer_game_root(
         }
 
         below = Some(current);
-        current = parent.to_path_buf();
+        current = parent;
     }
 
     // If the user selected a single game/install directory, protecting that
@@ -279,7 +279,11 @@ mod tests {
             PathBuf::from(r"D:\Games\Bar"),
         ]);
         assert_eq!(2, roots.len());
-        assert!(roots.iter().any(|path| normalized(path) == normalized(Path::new(r"D:\Games\Foo"))));
-        assert!(roots.iter().any(|path| normalized(path) == normalized(Path::new(r"D:\Games\Bar"))));
+        assert!(roots
+            .iter()
+            .any(|path| normalized(path) == normalized(Path::new(r"D:\Games\Foo"))));
+        assert!(roots
+            .iter()
+            .any(|path| normalized(path) == normalized(Path::new(r"D:\Games\Bar"))));
     }
 }
