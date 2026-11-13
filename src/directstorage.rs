@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
+use crate::folder::{is_protected_root_dir, volume_root_path};
+
 const DIRECT_STORAGE_DLLS: &[&str] = &["dstorage.dll", "dstoragecore.dll"];
 
 // These are library/container directories, not individual games. When a
@@ -220,9 +222,11 @@ pub fn discover_direct_storage_roots(scan_root: &Path) -> Vec<PathBuf> {
     let mut dlls = Vec::new();
     let mut exe_dirs = HashSet::new();
 
+    let volume_root = volume_root_path(scan_root);
     for entry in WalkDir::new(scan_root)
         .follow_links(false)
         .into_iter()
+        .filter_entry(|entry| !is_protected_root_dir(entry, volume_root.as_deref()))
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
     {

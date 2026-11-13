@@ -233,7 +233,8 @@ impl<T> Backend<T> {
     }
 
     fn target_is_valid(&self, path: &Path) -> bool {
-        match validate_target_path(path) {
+        let allow = config().read().unwrap().current().allow_drive_roots;
+        match validate_target_path(path, allow) {
             Ok(()) => true,
             Err(message) => {
                 self.gui.error("Folder not supported", &message);

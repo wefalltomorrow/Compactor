@@ -252,7 +252,7 @@ fn wide_null(path: &Path) -> Vec<u16> {
         .collect()
 }
 
-fn volume_root_path(path: &Path) -> Option<PathBuf> {
+pub(crate) fn volume_root_path(path: &Path) -> Option<PathBuf> {
     match path.components().next()? {
         Component::Prefix(prefix) => match prefix.kind() {
             Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
@@ -265,10 +265,12 @@ fn volume_root_path(path: &Path) -> Option<PathBuf> {
 }
 
 fn normalized_path(path: &Path) -> String {
-    path.to_string_lossy()
-        .replace('/', "\\")
-        .trim_end_matches('\\')
-        .to_ascii_lowercase()
+    let path = path.to_string_lossy().replace('/', "\\");
+    let path = match path.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest,
+        _ => &path,
+    };
+    path.trim_end_matches('\\').to_ascii_lowercase()
 }
 
 fn path_is_same_or_child(path: &Path, parent: &Path) -> bool {
@@ -340,7 +342,26 @@ fn cluster_size_for_path(path: &Path) -> u64 {
     }
 }
 
-pub fn validate_target_path(path: &Path) -> Result<(), String> {
+/// Windows-managed top-level directories (recycle bin, System Volume Information,
+/// Recovery, other `$*`) are never walked, even when the user selects a whole drive.
+pub(crate) fn is_protected_root_dir(entry: &walkdir::DirEntry, root: Option<&Path>) -> bool {
+    let Some(root) = root else { return false };
+    let Some(parent) = entry.path().parent() else {
+        return false;
+    };
+    if entry.file_type().is_file() || normalized_path(parent) != normalized_path(root) {
+        return false;
+    }
+    is_protected_root_name(&entry.file_name().to_string_lossy())
+}
+
+fn is_protected_root_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("system volume information")
+        || name.eq_ignore_ascii_case("recovery")
+        || name.starts_with('$')
+}
+
+pub fn validate_target_path(path: &Path, allow_drive_roots: bool) -> Result<(), String> {
     if !path.exists() {
         return Err("The selected folder no longer exists.".to_string());
     }
@@ -353,8 +374,16 @@ pub fn validate_target_path(path: &Path) -> Result<(), String> {
             .to_string()
     })?;
 
+    let system_root = std::env::var_os("SystemRoot").map(PathBuf::from);
     if normalized_path(path) == normalized_path(&root) {
-        return Err("Select a folder rather than an entire drive root.".to_string());
+        if !allow_drive_roots {
+            return Err("Select a folder or enable Allow scanning entire drives in Settings.".to_string());
+        }
+        let windows_volume = system_root.as_deref().and_then(volume_root_path)
+            .ok_or_else(|| "Unable to identify the active Windows volume.".to_string())?;
+        if normalized_path(&root) == normalized_path(&windows_volume) {
+            return Err("The active Windows volume root is protected from compression.".to_string());
+        }
     }
 
     let filesystem = volume_filesystem(path)
@@ -370,8 +399,8 @@ pub fn validate_target_path(path: &Path) -> Result<(), String> {
         ));
     }
 
-    if let Some(system_root) = std::env::var_os("SystemRoot") {
-        if path_is_same_or_child(path, &PathBuf::from(system_root)) {
+    if let Some(system_root) = system_root {
+        if path_is_same_or_child(path, &system_root) {
             return Err("The active Windows directory is protected from compression.".to_string());
         }
     }
@@ -383,10 +412,7 @@ pub fn validate_target_path(path: &Path) -> Result<(), String> {
         .map(|value| value.trim_start_matches('\\'))
     {
         let first = relative.split('\\').next().unwrap_or_default();
-        if first.eq_ignore_ascii_case("system volume information")
-            || first.eq_ignore_ascii_case("recovery")
-            || first.starts_with('$')
-        {
+        if is_protected_root_name(first) {
             return Err("The selected folder is a protected Windows-managed path.".to_string());
         }
     }
@@ -872,9 +898,13 @@ impl Background for FolderScan {
 
         let mut last_status = Instant::now();
 
+        let scan_root = volume_root_path(&path);
         let walker = WalkDir::new(&path)
             .into_iter()
-            .filter_entry(|e| e.file_type().is_file() || !excludes.is_match(e.path()))
+            .filter_entry(|e| {
+                e.file_type().is_file()
+                    || (!excludes.is_match(e.path()) && !is_protected_root_dir(e, scan_root.as_deref()))
+            })
             .filter_map(|e| e.map_err(|e| eprintln!("Error: {:?}", e)).ok())
             .filter(|e| e.file_type().is_file())
             .filter_map(|e| e.metadata().map(|md| (e, md)).ok())
