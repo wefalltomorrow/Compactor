@@ -222,7 +222,7 @@ var Response = (function() {
 				Gui.set_compression_priority(msg.compression_priority);
 				Gui.set_hdd_single_thread(msg.hdd_single_thread);
 				Gui.set_protect_direct_storage(msg.protect_direct_storage);
-				$("#Allow_Drive_Roots").prop("checked", msg.allow_drive_roots);
+				Gui.set_allow_drive_roots(msg.allow_drive_roots);
 				Gui.set_excludes(msg.excludes);
 				break;
 
@@ -465,6 +465,10 @@ var Gui = (function() {
 
 		set_hdd_single_thread: function(enabled) {
 			$("#HDD_Single_Thread").prop("checked", enabled);
+		},
+
+		set_allow_drive_roots: function(enabled) {
+			$("#Allow_Drive_Roots").prop("checked", enabled);
 		},
 
 		set_protect_direct_storage: function(enabled) {
