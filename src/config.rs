@@ -88,6 +88,8 @@ pub struct Config {
     pub hdd_single_thread: bool,
     #[serde(default = "default_protect_direct_storage")]
     pub protect_direct_storage: bool,
+    #[serde(default)]
+    pub allow_drive_roots: bool,
     #[serde(default = "default_compression_priority")]
     pub compression_priority: CompressionPriority,
     pub excludes: Vec<String>,
@@ -102,6 +104,7 @@ impl Default for Config {
             max_threads: default_max_threads(),
             hdd_single_thread: default_hdd_single_thread(),
             protect_direct_storage: default_protect_direct_storage(),
+            allow_drive_roots: false,
             compression_priority: default_compression_priority(),
             excludes: vec![
                 "*:\\Windows*",
