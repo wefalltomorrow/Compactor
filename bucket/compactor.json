@@ -1,0 +1,26 @@
+{
+    "version": "0.11.5",
+    "description": "A lightweight GUI for Windows WOF filesystem compression",
+    "homepage": "https://github.com/wefalltomorrow/Compactor",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/wefalltomorrow/Compactor/releases/download/v0.11.5/Compactor.exe",
+            "hash": "92ecfed2b4b89fd65a92fd86839b31d009331f92885b43f76109b46ab7efcd20"
+        }
+    },
+    "shortcuts": [
+        [
+            "Compactor.exe",
+            "Compactor"
+        ]
+    ],
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/wefalltomorrow/Compactor/releases/download/v$version/Compactor.exe"
+            }
+        }
+    }
+}

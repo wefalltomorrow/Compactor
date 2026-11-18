@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Scoop manifest in `bucket/`, so the repository can be added as a Scoop bucket. A scheduled workflow keeps it pointed at the latest release.
+
 ## [0.11.5] - 2026-09-14
 
 ### Added

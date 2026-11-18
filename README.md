@@ -56,6 +56,15 @@ Download the latest Windows x64 executable from the [Releases](https://github.co
 
 Compactor is portable and does not require an installer or background service.
 
+It can also be installed with [Scoop](https://scoop.sh) from the manifest in this repository:
+
+```powershell
+scoop bucket add compactor https://github.com/wefalltomorrow/Compactor
+scoop install compactor/compactor
+```
+
+Use `scoop update compactor` to upgrade. The `compactor/` prefix matters because the Scoop Extras bucket still carries the original 0.10.1 release under the same name.
+
 ## Usage
 
 1. Choose a folder.
